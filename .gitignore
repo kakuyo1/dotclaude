@@ -15,9 +15,6 @@ tasks/
 plugins/*
 audit-history/
 
-!plugins/installed_plugins.json
-!plugins/known_marketplaces.json
-
 worktrees/
 scheduled_tasks.lock
 scheduled_tasks.json
@@ -39,6 +36,7 @@ daemon.status.json
 .caveman-statusline-suffix
 
 mcp-needs-auth-cache.json
+stats-cache.json
 history.jsonl
 settings.local.json
 settings.json.bak*

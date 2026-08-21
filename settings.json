@@ -12,14 +12,196 @@
     "CLAUDE_CODE_EFFORT_LEVEL": "max"
   },
   "model": "deepseek-v4-flash[1m]",
+  "skillOverrides": {
+    "deslop": "user-invocable-only",
+    "tldr": "user-invocable-only",
+    "qt-cmake-project": "off",
+    "qt-cpp-docs": "off",
+    "qt-cpp-review": "off",
+    "qt-figma-component-generation": "off",
+    "qt-figma-token-extraction": "off",
+    "qt-qml": "off",
+    "qt-qml-docs": "off",
+    "qt-qml-profiler": "off",
+    "qt-qml-review": "off",
+    "qt-qml-test": "off",
+    "qt-qml-test-run": "off",
+    "qt-ui-design": "off"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-destructive-git.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-git-amend.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-dangerous-ops.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-cat-write.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-heredoc.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-devnull-redirect.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/no-multi-question.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/hint-skill-read-url.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/hint-agent-claude-code-guide.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/verify-explore-results.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/websearch-followup-hint.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "SendUserFile",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/track-sent-file.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/inject-git-status.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/inject-time.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/inject-system-load.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/compact-bump.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
   "statusLine": {
     "type": "command",
-    "command": "\"C:/Program Files/Git/bin/bash.exe\" -lc \"$HOME/.claude/statusline.sh\"",
+    "command": "bash -lc \"$HOME/.claude/statusline.sh\"",
     "refreshInterval": 5
   },
   "enabledPlugins": {
     "frontend-skills@cc-frontend-skills": false,
-    "superpowers@claude-plugins-official": false,
     "ponytail@ponytail": true,
     "context7@claude-plugins-official": false,
     "impeccable@impeccable": false,
@@ -43,50 +225,15 @@
         "source": "github",
         "repo": "pbakaus/impeccable"
       }
+    },
+    "diagram-design": {
+      "source": {
+        "source": "github",
+        "repo": "cathrynlavery/diagram-design"
+      }
     }
   },
   "effortLevel": "xhigh",
   "theme": "dark-ansi",
-  "autoCompactEnabled": true,
-  "skillOverrides": {
-    "tldr": "user-invocable-only",
-    "qt-cmake-project": "off",
-    "qt-cpp-docs": "off",
-    "qt-cpp-review": "off",
-    "qt-figma-component-generation": "off",
-    "qt-figma-token-extraction": "off",
-    "qt-qml": "off",
-    "qt-qml-docs": "off",
-    "qt-qml-profiler": "off",
-    "qt-qml-review": "off",
-    "qt-qml-test": "off",
-    "qt-qml-test-run": "off",
-    "qt-ui-design": "off"
-  },
-  "hooks": {
-    "PreToolUse": [
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-destructive-git.sh", "timeout": 5}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-git-amend.sh", "timeout": 5}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-dangerous-ops.sh", "timeout": 5}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-cat-write.sh", "timeout": 5}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-heredoc.sh", "timeout": 5}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-devnull-redirect.sh", "timeout": 5}]},
-      {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-multi-question.sh", "timeout": 5}]},
-      {"matcher": "WebFetch", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/hint-skill-read-url.sh", "timeout": 5}]},
-      {"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/hint-agent-claude-code-guide.sh", "timeout": 5}]}
-    ],
-    "PostToolUse": [
-      {"matcher": "Agent", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/verify-explore-results.sh", "timeout": 5}]},
-      {"matcher": "WebSearch", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/websearch-followup-hint.sh", "timeout": 5}]},
-      {"matcher": "SendUserFile", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/track-sent-file.sh", "timeout": 10}]}
-    ],
-    "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-git-status.sh", "timeout": 5}]},
-      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-time.sh", "timeout": 5}]},
-      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-system-load.sh", "timeout": 5}]}
-    ],
-    "PostCompact": [
-      {"matcher": "manual|auto", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/compact-bump.sh", "timeout": 5}]}
-    ]
-  }
+  "autoCompactEnabled": true
 }
