@@ -48,6 +48,9 @@
   "effortLevel": "xhigh",
   "theme": "dark-ansi",
   "autoCompactEnabled": true,
+  "skillOverrides": {
+    "tldr": "user-invocable-only"
+  },
   "hooks": {
     "PreToolUse": [
       {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-destructive-git.sh", "timeout": 5}]},
