@@ -9,11 +9,16 @@
     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "deepseek-v4-flash",
     "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+    "CLAUDE_CODE_FORK_SUBAGENT": "1"
   },
   "model": "deepseek-v4-flash[1m]",
   "skillOverrides": {
+    "claude-api": "user-invocable-only",
     "deslop": "user-invocable-only",
+    "fewer-permission-prompts": "user-invocable-only",
+    "init": "user-invocable-only",
+    "keybindings-help": "user-invocable-only",
+    "security-review": "user-invocable-only",
     "tldr": "user-invocable-only",
     "qt-cmake-project": "off",
     "qt-cpp-docs": "off",
@@ -233,7 +238,12 @@
       }
     }
   },
+  "autoCompactEnabled": true,
+  "autoMemoryEnabled": true,
+  "cleanupPeriodDays": 3650,
   "effortLevel": "xhigh",
-  "theme": "dark-ansi",
-  "autoCompactEnabled": true
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "theme": "dark-ansi"
 }
