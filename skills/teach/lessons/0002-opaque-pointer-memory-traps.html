@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0002：C 桥接层的内存管理陷阱</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>0002 · C 桥接层的内存管理陷阱</h1>
+<p style="color:var(--muted); font-size:1rem;">不透明指针模式下最容易踩的四个坑</p>
+
+<hr>
+
+<p>
+<a href="./0001-c-bridge-dlsym-pattern.html">上一课</a> 我们搞清楚了<strong>为什么</strong>需要 C 桥接层。
+这一课讲<strong>怎么写才不会埋雷</strong>——四个真实工程中高频出现的陷阱。
+每个陷阱都遵循同一模式：先看<em>错误代码</em>（你可能正在这么写），再理解<em>为什么炸</em>，最后看<em>修复方案</em>。
+</p>
+
+<hr>
+
+<h2>陷阱一：c_str() 悬垂指针</h2>
+
+<p>你的 C API 返回一个 <code>const char*</code>。在桥接层里，你从 <code>std::string</code> 拿到 <code>c_str()</code> 然后返回。但 <code>std::string</code> 是个临时对象……</p>
+
+<div class="bna">
+  <div class="bad">
+    <div class="bna-hd">❌ 错误写法</div>
+<pre><code>// voice_c_api.cpp
+extern "C" {
+
+const char* voice_get_result(
+    VoiceEngineHandle* h)
+{
+    auto result = h->impl->getResult();
+    //          ↑ std::string 临时对象
+    return result.c_str();
+    //     ↑ 悬垂! 函数返回后 result
+    //       被销毁，指针指向释放的内存
+}
+
+}</code></pre>
+  </div>
+  <div class="good">
+    <div class="bna-hd">✓ 修复方案 A：调用方提供缓冲区</div>
+<pre><code>// voice_c_api.h
+int voice_get_result(
+    VoiceEngineHandle* h,
+    char* buf, int buf_size);
+//   ↑ 调用方拥有内存，没有悬垂问题
+
+// voice_c_api.cpp
+int voice_get_result(
+    VoiceEngineHandle* h,
+    char* buf, int buf_size)
+{
+    auto& s = h->impl->getResult();
+    int n = std::min((int)s.size(),
+                     buf_size - 1);
+    memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return n;
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout tip">
+  <strong>方案 B（API 返回所有权）：</strong> 也可以返回 <code>strdup</code> 的拷贝，然后提供 <code>voice_free_string(char*)</code> 让调用方释放。两种方案都是<strong>明确所有权归属</strong>——方案 A 让调用方提供缓冲区（零拷贝思想），方案 B 让调用方负责释放。
+</div>
+
+<h3>触类旁通</h3>
+<p>这个问题的本质不是 <code>c_str()</code>，而是<strong>"通过 C 边界返回指针时，谁拥有指针指向的内存"</strong>。同样的问题会出现在：</p>
+<ul>
+  <li>返回 <code>std::vector&lt;uint8_t&gt;::data()</code></li>
+  <li>返回 <code>QByteArray::constData()</code></li>
+  <li>返回任何临时对象的内部指针</li>
+</ul>
+
+<hr>
+
+<h2>陷阱二：跨 .so 边界的 new/delete 不匹配</h2>
+
+<p>这是一个<strong>没有任何警告、运行时随机崩溃</strong>的 bug。</p>
+
+<div class="trap bad">
+  <div class="trap-hd">❌ 陷阱场景<span class="tag bad-tag">UNDEFINED BEHAVIOR</span></div>
+  <div class="trap-bd">
+<pre><code>// 语音引擎 (.so) 内部——链接了 libc++ A
+void* voice_engine_create_buffer(int size) {
+    return ::operator new(size);  // 使用 .so 的 operator new
+}
+
+// Qt 前端——链接了 libc++ B（不同版本或不同编译器）
+void process() {
+    void* buf = voice_engine_create_buffer(1024);
+    // ...
+    ::operator delete(buf);  // 使用前端的 operator delete
+    //                        ↑ 堆实现不匹配 → HEAP CORRUPTION
+}</code></pre>
+  </div>
+</div>
+
+<p><strong>为什么？</strong> 每个动态库可能链接自己的 C++ 运行时。.so 的 <code>operator new</code> 使用 .so 的堆，前端的 <code>operator delete</code> 使用前端的堆——两个堆不是同一个。这叫 <strong>allocator mismatch</strong>。</p>
+
+<div class="trap good">
+  <div class="trap-hd">✓ 核心原则：谁分配，谁释放<span class="tag good-tag">CORRECT</span></div>
+  <div class="trap-bd">
+<pre><code>// voice_c_api.h —— 为每种资源提供对称的 create/destroy
+
+typedef struct VoiceResult VoiceResult;
+
+VoiceResult* voice_result_create(VoiceEngineHandle* h);
+void         voice_result_destroy(VoiceResult* r);
+//           ↑ 在 .so 内部 delete —— 和 new 在同一堆上
+const char*  voice_result_text(VoiceResult* r);
+
+// 前端：
+VoiceResult* r = voice_result_create(engine);
+printf("%s\n", voice_result_text(r));
+voice_result_destroy(r);  // 让 .so 自己释放</code></pre>
+  </div>
+</div>
+
+<div class="callout warn">
+  <strong>这一条也适用于 C 标准库：</strong> 如果 .so 用一个 <code>malloc</code> 实现编译，前端用另一个，<code>malloc</code>/<code>free</code> 跨边界同样是 UB。生产级代码应该让 .so 暴露对称的 create/destroy，或者所有分配走同一个分配器（比如传入函数指针）。
+</div>
+
+<hr>
+
+<h2>陷阱三：C++ 异常穿越 C 栈帧</h2>
+
+<p><code>extern "C"</code> 函数体内如果抛出 C++ 异常，且调用方是纯 C 代码——行为是<strong>未定义的</strong>。即使调用方也是 C++，异常穿越 <code>extern "C"</code> 边界仍然可能在特定编译器/平台上导致资源泄漏或崩溃。</p>
+
+<div class="bna">
+  <div class="bad">
+    <div class="bna-hd">❌ 危险</div>
+<pre><code>extern "C" {
+
+int voice_engine_process(
+    VoiceEngineHandle* h,
+    const char* audio, int len)
+{
+    h->impl->process(audio, len);
+    //  ↑ 如果这抛出异常 → UB
+    return 0;
+}
+
+}</code></pre>
+  </div>
+  <div class="good">
+    <div class="bna-hd">✓ 必须吞掉所有异常</div>
+<pre><code>extern "C" {
+
+int voice_engine_process(
+    VoiceEngineHandle* h,
+    const char* audio, int len)
+{
+    try {
+        h->impl->process(audio, len);
+        return 0;
+    } catch (const std::exception& e) {
+        // 记日志、设错误码——但绝不 rethrow
+        h->last_error = e.what();
+        return -1;
+    } catch (...) {
+        h->last_error = "unknown error";
+        return -2;
+    }
+}
+
+}</code></pre>
+  </div>
+</div>
+
+<p><strong>规则很简单：</strong> 每个 <code>extern "C"</code> 函数都必须是 <code>noexcept</code> 的——在函数体内部用 <code>try/catch(...)</code> 兜底。C ABI 不认识 C++ 异常。</p>
+
+<hr>
+
+<h2>陷阱四：线程安全——状态归谁管？</h2>
+
+<p>C API 里没有 <code>std::mutex</code> 的概念。但你的 <code>VoiceEngine</code> 内部可能有状态读写。谁来保证不透明指针的多线程安全？</p>
+
+<div class="trap bad">
+  <div class="trap-hd">❌ 让调用方"注意线程安全"<span class="tag bad-tag">AMBIGUOUS</span></div>
+  <div class="trap-bd">
+    <p style="margin:0;">这是最常见的不作为——API 文档写一句"本接口不是线程安全的"，把责任推给调用方。结果是调用方要么忘了、要么自己加锁但加错了粒度（比如锁了不该锁的），要么做双重加锁。</p>
+  </div>
+</div>
+
+<div class="trap good">
+  <div class="trap-hd">✓ 两种明确的策略<span class="tag good-tag">EXPLICIT</span></div>
+  <div class="trap-bd">
+    <p><strong>策略 A——内部加锁：</strong> 每个 API 函数内部获取互斥锁。简单、调用方零负担。适合低频调用。</p>
+<pre><code>int voice_engine_start(VoiceEngineHandle* h, ...) {
+    std::lock_guard&lt;std::mutex&gt; lock(h->mutex);
+    return h->impl->start(...);
+}</code></pre>
+    <p style="margin-top:0.8em;"><strong>策略 B——明确文档+可重入保证：</strong> 单线程使用，或调用方负责外部同步。在头文件中<em>明确声明</em>，不要留灰色地带。</p>
+<pre><code>// voice_c_api.h
+//
+// ## Thread Safety
+// A VoiceEngineHandle MUST be used from a single
+// thread at a time. To share across threads, the
+// caller must provide external synchronization.
+// Different handles may be used concurrently.</code></pre>
+  </div>
+</div>
+
+<hr>
+
+<h2>四个陷阱速查表</h2>
+
+<table class="compare">
+  <tr><th>陷阱</th><th>症状</th><th>一招制胜</th></tr>
+  <tr>
+    <td>c_str() 悬垂</td>
+    <td>随机乱码 / SIGSEGV</td>
+    <td>调用方提供缓冲区，或 strdup + 配套 free 函数</td>
+  </tr>
+  <tr>
+    <td>跨边界 new/delete</td>
+    <td>堆损坏 / double free / 无警告崩溃</td>
+    <td>对称的 create/destroy，.so 内部自分配自释放</td>
+  </tr>
+  <tr>
+    <td>异常穿越 C 帧</td>
+    <td>未定义行为，通常直接 crash</td>
+    <td>每个 extern "C" 函数体 try/catch(...) 兜底</td>
+  </tr>
+  <tr>
+    <td>线程安全模糊</td>
+    <td>偶发性 data race / 极难复现</td>
+    <td>明确策略：内部加锁 或 文档声明单线程契约</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>自测</h2>
+
+<div class="quiz" id="q1-container">
+  <p class="q">问题 1：下面的 C API 函数有什么问题？</p>
+<pre><code>const char* get_model_name(VoiceEngineHandle* h) {
+    std::string name = h->impl->modelName();
+    return name.c_str();
+}</code></pre>
+  <div class="opts">
+    <div class="opt" data-id="a">A. <code>modelName()</code> 可能抛异常</div>
+    <div class="opt" data-id="b">B. 返回的指针指向已销毁的局部变量——悬垂指针</div>
+    <div class="opt" data-id="c">C. <code>const char*</code> 和 <code>char*</code> 类型不兼容</div>
+    <div class="opt" data-id="d">D. 没有用 <code>strdup</code> 复制字符串</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q1-container', 'b')">提交</button>
+</div>
+
+<div class="quiz" id="q2-container">
+  <p class="q">问题 2：为什么跨 .so 边界的 <code>new</code>/<code>delete</code> 可能崩溃，而 <code>malloc</code>/<code>free</code> 通常在 Linux 上能工作？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. new/delete 是运算符，malloc/free 是函数</div>
+    <div class="opt" data-id="b">B. malloc/free 来自 libc，整个进程通常共享同一个 libc 实例；而 C++ 的 operator new 可能每个 .so 各自链接一份</div>
+    <div class="opt" data-id="c">C. new 会调构造函数，malloc 不会</div>
+    <div class="opt" data-id="d">D. 这题前提错了——malloc/free 跨 .so 边界也一定崩溃</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q2-container', 'b')">提交</button>
+</div>
+
+<div class="quiz" id="q3-container">
+  <p class="q">问题 3：<code>extern "C"</code> 函数中漏写 <code>try/catch</code> 兜底——什么情况下<strong>一定会出问题</strong>？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. 调用方是纯 C 代码</div>
+    <div class="opt" data-id="b">B. 调用方也是 C++ 代码</div>
+    <div class="opt" data-id="c">C. 任何情况下都是 UB——只是 crash 概率不同</div>
+    <div class="opt" data-id="d">D. GCC 上安全、Clang 上不安全</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q3-container', 'c')">提交</button>
+</div>
+
+<script>
+function check(containerId, correctId) {
+  const container = document.getElementById(containerId);
+  const opts = container.querySelectorAll('.opt');
+  const fb = container.querySelector('.feedback');
+  const btn = container.querySelector('button');
+
+  let selected = null;
+  opts.forEach(o => {
+    o.classList.remove('selected','correct','wrong');
+    if (o.classList.contains('chosen')) selected = o.dataset.id;
+  });
+
+  if (!selected) { fb.textContent = '请先选择一个选项。'; fb.className = 'feedback'; return; }
+
+  opts.forEach(o => {
+    o.style.pointerEvents = 'none';
+    if (o.dataset.id === correctId) o.classList.add('correct');
+    else if (o.dataset.id === selected) o.classList.add('wrong');
+  });
+
+  if (selected === correctId) {
+    fb.textContent = '✓ 正确！';
+    fb.className = 'feedback correct-fb';
+  } else {
+    fb.textContent = '✗ 不对，再想想。正确答案已标绿。';
+    fb.className = 'feedback wrong-fb';
+  }
+  btn.disabled = true;
+}
+
+document.querySelectorAll('.quiz .opt').forEach(opt => {
+  opt.addEventListener('click', function() {
+    const container = this.closest('.quiz');
+    container.querySelectorAll('.opt').forEach(o => o.classList.remove('chosen','selected'));
+    this.classList.add('chosen','selected');
+  });
+});
+</script>
+
+<hr>
+
+<h2>进一步阅读</h2>
+
+<ul>
+  <li>
+    <a href="https://www.akkadia.org/drepper/dsohowto.pdf" target="_blank">How To Write Shared Libraries — Ulrich Drepper</a>
+    §2.2 "Memory Allocation" 详细讨论了跨动态库边界的内存管理问题。
+  </li>
+  <li>
+    <a href="https://isocpp.org/wiki/faq/exceptions#noexcept-destructors" target="_blank">C++ FAQ: Exceptions and noexcept</a>
+    为什么异常不能安全穿越 C 栈帧。
+  </li>
+  <li>
+    本工作区的 <a href="../reference/glossary.html">术语表</a>——不透明指针、编译防火墙的准确定义
+  </li>
+</ul>
+
+<div class="meta">
+  <p>
+    <strong>上一课：</strong> <a href="./0001-c-bridge-dlsym-pattern.html">为什么 C++ 接口外面要套一层 C 桥接？</a><br>
+    <strong>下一课预告：</strong> 生产级的 C API 设计——符号可见性控制（<code>-fvisibility=hidden</code>）、版本管理、<code>RTLD_NOW</code> vs <code>RTLD_LAZY</code> 的取舍。<br>
+    <strong>有问题？</strong> 直接在 Claude Code 里问我——任何不理解的地方我都能展开讲。
+  </p>
+  <p style="margin-top:0.5em;">创建于 2026-08-01 · 课程 0002</p>
+</div>
+
+</body>
+</html>

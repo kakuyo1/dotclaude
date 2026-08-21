@@ -6,6 +6,8 @@ session-env/
 sessions/
 ide/
 daemon/
+debug/
+downloads/
 jobs/
 shell-snapshots/
 projects/

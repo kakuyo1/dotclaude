@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0005：dlsym/dlopen 的 CMake 配置实战</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>0005 · dlsym/dlopen 的 CMake 配置实战</h1>
+<p style="color:var(--muted); font-size:1rem;">从 CMakeLists.txt 到能跑的 .so + 前端——完整工程配置</p>
+
+<hr>
+
+<p>
+<a href="./0001-c-bridge-dlsym-pattern.html">前面</a>
+<a href="./0004-symbol-visibility-versioning.html">四课</a> 讲完了原理和陷阱。这节课把它们全部落地到 CMake 配置上，目标是<strong>你能直接复制修改用到自己的项目里</strong>。
+</p>
+
+<hr>
+
+<h2>一、总体结构：两个 CMake 项目的分工</h2>
+
+<div class="fig">
+<svg viewBox="0 0 640 300" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <marker id="dep" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#1976d2"/>
+    </marker>
+    <marker id="no-dep" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#c44"/>
+    </marker>
+    <filter id="sh2"><feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.1"/></filter>
+  </defs>
+
+  <!-- Left: libvoice.so -->
+  <rect x="20" y="30" width="280" height="250" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="160" y="58" text-anchor="middle" font-size="16" font-weight="700" fill="#1565c0">libvoice.so 项目</text>
+  <line x1="40" y1="68" x2="280" y2="68" stroke="#90caf9" stroke-width="1"/>
+
+  <text x="45" y="90" font-size="11" fill="#555">CMake 目标：</text>
+  <rect x="45" y="98" width="235" height="22" rx="3" fill="#bbdefb"/>
+  <text x="162" y="113" text-anchor="middle" font-size="11" font-family="monospace" fill="#1565c0">add_library(voice SHARED ...)</text>
+
+  <text x="45" y="140" font-size="11" fill="#555">产物：</text>
+  <text x="45" y="158" font-size="11" font-family="monospace" fill="#555">libvoice.so.1.2.0</text>
+  <text x="45" y="174" font-size="11" font-family="monospace" fill="#555">libvoice.so.1 → libvoice.so.1.2.0</text>
+  <text x="45" y="190" font-size="11" font-family="monospace" fill="#555">libvoice.so → libvoice.so.1</text>
+  <text x="45" y="206" font-size="11" font-family="monospace" fill="#555">voice_c_api.h</text>
+  <text x="45" y="222" font-size="11" font-family="monospace" fill="#555">voice_export.h</text>
+
+  <text x="45" y="250" font-size="10" fill="#888">编译时设置：soname, visibility,</text>
+  <text x="45" y="266" font-size="10" fill="#888">版本脚本, 安装规则</text>
+
+  <!-- Right: Qt frontend -->
+  <rect x="340" y="30" width="280" height="250" rx="8" fill="#fff3e0" stroke="#ff9800" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="480" y="58" text-anchor="middle" font-size="16" font-weight="700" fill="#e65100">Qt 前端项目</text>
+  <line x1="360" y1="68" x2="600" y2="68" stroke="#ffcc80" stroke-width="1"/>
+
+  <text x="365" y="90" font-size="11" fill="#555">CMake 目标：</text>
+  <rect x="365" y="98" width="235" height="22" rx="3" fill="#ffe0b2"/>
+  <text x="482" y="113" text-anchor="middle" font-size="11" font-family="monospace" fill="#e65100">add_executable(my_app ...)</text>
+
+  <text x="365" y="140" font-size="11" fill="#555">链接依赖：</text>
+  <text x="365" y="158" font-size="11" font-family="monospace" fill="#c44"># 不链接 libvoice.so！</text>
+  <text x="365" y="174" font-size="11" font-family="monospace" fill="#2a7d2a">target_link_libraries(my_app</text>
+  <text x="365" y="190" font-size="11" font-family="monospace" fill="#2a7d2a">  PRIVATE ${CMAKE_DL_LIBS}</text>
+  <text x="365" y="206" font-size="11" font-family="monospace" fill="#2a7d2a">  Qt5::Core ...)</text>
+
+  <text x="365" y="240" font-size="10" fill="#888">运行时通过 dlopen 发现 .so</text>
+  <text x="365" y="256" font-size="10" fill="#888">需要: RPATH 配置或环境变量</text>
+
+  <!-- Arrow between: no link dependency -->
+  <line x1="300" y1="155" x2="340" y2="155" stroke="#c44" stroke-width="2" marker-end="url(#no-dep)" stroke-dasharray="6,3"/>
+  <text x="320" y="148" text-anchor="middle" font-size="9" fill="#c44" font-weight="700">不链接</text>
+</svg>
+<div class="caption">图 1：两个 CMake 项目的职责划分。关键点：前端不链接 libvoice.so，只链接 libdl。编译时没有依赖关系，运行时通过 dlopen 发现。</div>
+</div>
+
+<hr>
+
+<h2>二、.so 侧：完整的 CMakeLists.txt</h2>
+
+<p>这是语音引擎的构建配置——从源码到可安装的 .so。每一行都有注释解释为什么。</p>
+
+<pre><code># ============================================================
+# libvoice/CMakeLists.txt  —— 语音引擎 .so
+# ============================================================
+cmake_minimum_required(VERSION 3.14)
+project(voice VERSION 1.2.0 LANGUAGES C CXX)
+
+# ── 1. 生成导出头文件 ──────────────────────────
+# 自动生成 voice_export.h，内容类似：
+#   #define VOICE_API __attribute__((visibility("default")))
+include(GenerateExportHeader)
+# 注意：待会 add_library 之后才调用 generate_export_header
+
+# ── 2. 定义 .so 目标 ──────────────────────────
+add_library(voice SHARED
+    # 公开 C API 头文件（安装给消费者）
+    PUBLIC
+        include/voice_c_api.h
+
+    # 实现文件
+    PRIVATE
+        src/voice_c_api.cpp      # C 桥接层实现
+        src/VoiceEngine.cpp      # 你的 C++ 语音引擎
+        src/AudioBuffer.cpp
+        src/ModelLoader.cpp
+)
+
+# ── 3. 生成 VOICE_API 宏 ──────────────────────
+generate_export_header(voice
+    BASE_NAME voice
+    EXPORT_FILE_NAME include/voice_export.h
+)
+# 产物: ${CMAKE_CURRENT_BINARY_DIR}/include/voice_export.h
+
+# ── 4. 设置符号可见性 ─────────────────────────
+set_target_properties(voice PROPERTIES
+    # 默认隐藏所有符号
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN  ON
+
+    # 对应 -fvisibility=hidden -fvisibility-inlines-hidden
+)
+
+# ── 5. 设置 SO 版本 ───────────────────────────
+set_target_properties(voice PROPERTIES
+    VERSION  ${PROJECT_VERSION}   # 1.2.0  → 实名 libvoice.so.1.2.0
+    SOVERSION 1                   # soname  → libvoice.so.1
+)
+# CMake 会自动创建符号链接:
+#   libvoice.so     → libvoice.so.1
+#   libvoice.so.1   → libvoice.so.1.2.0
+#   libvoice.so.1.2.0  (真实文件)
+
+# ── 6. 编译选项 ───────────────────────────────
+target_compile_features(voice PRIVATE cxx_std_17)
+target_include_directories(voice
+    PUBLIC
+        $&lt;BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include&gt;
+        $&lt;BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include&gt;  # voice_export.h 在这里
+        $&lt;INSTALL_INTERFACE:include&gt;
+    PRIVATE
+        src/
+)
+
+# ── 7. 链接内部依赖 ───────────────────────────
+find_package(Threads REQUIRED)  # 如果内部用了线程
+target_link_libraries(voice PRIVATE
+    Threads::Threads
+    # 其他内部依赖……全部 PRIVATE ——不泄漏给消费者
+)
+
+# ── 8. (可选) 版本脚本 ────────────────────────
+# 如果你需要符号版本控制，创建一个 libvoice.ver 文件
+# target_link_options(voice PRIVATE
+#     -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libvoice.ver
+# )
+
+# ── 9. 安装规则 ───────────────────────────────
+include(GNUInstallDirs)
+
+install(TARGETS voice
+    EXPORT  voiceTargets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}   # .so 文件 + 符号链接
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}   # 静态库（如果有）
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}   # Windows DLL
+)
+
+install(FILES
+    include/voice_c_api.h
+    ${CMAKE_CURRENT_BINARY_DIR}/include/voice_export.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/voice
+)
+
+# ── 10. 导出 CMake 配置（给不用 dlopen 的消费者）──
+install(EXPORT voiceTargets
+    FILE voiceTargets.cmake
+    NAMESPACE voice::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/voice
+)</code></pre>
+
+<div class="callout tip">
+  <strong>第 4-5 步是关键：</strong> <code>CXX_VISIBILITY_PRESET hidden</code> + <code>generate_export_header</code> + <code>VERSION/SOVERSION</code> 三个属性一起，让你的 .so 从编译出来的那一刻就是生产级的。不需要手写 <code>-fvisibility=hidden</code> 和 <code>-Wl,-soname</code>。
+</div>
+
+<h3>安装后的目录结构</h3>
+
+<pre><code>/usr/local/
+├── include/voice/
+│   ├── voice_c_api.h
+│   └── voice_export.h
+└── lib/
+    ├── libvoice.so → libvoice.so.1
+    ├── libvoice.so.1 → libvoice.so.1.2.0
+    ├── libvoice.so.1.2.0
+    └── cmake/voice/
+        └── voiceTargets.cmake</code></pre>
+
+<hr>
+
+<h2>三、前端侧：完整的 CMakeLists.txt</h2>
+
+<p>前端<strong>不链接</strong> libvoice.so。它只链接 libdl（提供 dlopen/dlsym/dlclose），然后通过头文件知道 C API 的签名，在运行时自己加载 .so。</p>
+
+<pre><code># ============================================================
+# frontend/CMakeLists.txt  —— Qt 前端
+# ============================================================
+cmake_minimum_required(VERSION 3.14)
+project(my_app VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+
+# ── 1. 找到 Qt ─────────────────────────────────
+find_package(Qt5 COMPONENTS Core Widgets REQUIRED)
+
+# ── 2. 主程序 ──────────────────────────────────
+add_executable(my_app
+    main.cpp
+    VoiceModuleLoader.cpp   # 封装 dlopen/dlsym 的类
+    MainWindow.cpp           # Qt 界面
+)
+
+# ── 3. 关键：链接 libdl，不链接 libvoice ──────
+target_link_libraries(my_app PRIVATE
+    Qt5::Core
+    Qt5::Widgets
+    ${CMAKE_DL_LIBS}         # 在 Linux 上 = dl
+)                             # 在 BSD 上也是 dl
+                              # 在 macOS 上为空（dlopen 在 libSystem 中）
+                              # 在 Windows 上用这个变量也安全（展开为空）
+
+# ── 4. 可选：把语音头文件路径加入 include ─────────
+# 如果你不想复制头文件，直接在源码里 #include 相对路径也可以
+# 但为了规范性，建议这样：
+target_include_directories(my_app PRIVATE
+    ${CMAKE_SOURCE_DIR}/../libvoice/include
+)
+
+# ── 5. RPATH 配置 —— 运行时从哪里找 .so ─────────
+# 这是最容易出问题的地方，下节单独展开讲
+</code></pre>
+
+<div class="callout warn">
+  <strong>常见错误：</strong> 有人会把 libvoice.so 加到 <code>target_link_libraries</code> 中，然后又在代码里用 dlopen——这等于运行时加载了两遍（一次是 linker 在启动时加载的，一次是你的 dlopen），引用计数变成 2，需要 dlclose 两次才能真正卸载。
+</div>
+
+<hr>
+
+<h2>四、RPATH 配置——让 dlopen 找到 .so</h2>
+
+<p>这是 C 桥接层 + dlopen 模式中最容易出问题的地方。<code>dlopen("libvoice.so")</code> 这种相对路径写法在生产环境中几乎一定会失败——因为工作目录不一定是 .so 所在的目录。</p>
+
+<h3>问题根源：dlopen 的搜索顺序</h3>
+
+<div class="timeline">
+  <div class="step">
+    <span class="step-num">①</span> 如果路径包含 <code>/</code>（如 <code>./libvoice.so</code> 或绝对路径），直接用这个路径
+  </div>
+  <div class="step">
+    <span class="step-num">②</span> 搜索 ELF 的 DT_RPATH（编译时写入的 RPATH）——<strong>仅当 DT_RUNPATH 不存在时</strong>
+  </div>
+  <div class="step">
+    <span class="step-num">③</span> 搜索 <code>LD_LIBRARY_PATH</code> 环境变量
+  </div>
+  <div class="step">
+    <span class="step-num">④</span> 搜索 ELF 的 DT_RUNPATH（编译时写入的 RUNPATH）
+  </div>
+  <div class="step">
+    <span class="step-num">⑤</span> 搜索 <code>/etc/ld.so.cache</code>
+  </div>
+  <div class="step">
+    <span class="step-num">⑥</span> 搜索 <code>/lib</code> 和 <code>/usr/lib</code>
+  </div>
+</div>
+
+<p>对于 dlopen 场景，你需要确保 <code>libvoice.so.1</code> 在这些搜索路径的某个地方。三种常见策略：</p>
+
+<div class="trap good">
+  <div class="trap-hd">策略 A：RPATH 指向安装目录（推荐用于发布）<span class="tag good-tag">PRODUCTION</span></div>
+  <div class="trap-bd">
+<pre><code># 可执行文件编译时写入 RPATH
+set_target_properties(my_app PROPERTIES
+    INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}"
+    # 或者相对于可执行文件的位置: $ORIGIN/../lib
+    INSTALL_RPATH "$ORIGIN/../lib"
+)
+
+# 如果可执行文件在 bin/my_app，.so 在 lib/libvoice.so：
+# 最终安装目录:
+#   /opt/myapp/bin/my_app      ← RPATH = $ORIGIN/../lib
+#   /opt/myapp/lib/libvoice.so.1.2.0</code></pre>
+  </div>
+</div>
+
+<div class="trap good">
+  <div class="trap-hd">策略 B：硬编码搜索路径（推荐用于开发阶段）<span class="tag good-tag">DEVELOPMENT</span></div>
+  <div class="trap-bd">
+<pre><code># 开发时在代码中写死 build 目录
+void* handle = dlopen(
+    "/home/user/project/build/libvoice/libvoice.so", RTLD_NOW);
+// 或者从配置文件读路径
+// 或者用 CMake 的 configure_file 在编译时注入路径</code></pre>
+  </div>
+</div>
+
+<div class="trap good">
+  <div class="trap-hd">策略 C：LD_LIBRARY_PATH（推荐用于测试/CI）<span class="tag good-tag">CI/TEST</span></div>
+  <div class="trap-bd">
+<pre><code># 只在测试脚本和 CI 中使用——生产环境不要依赖环境变量
+$ LD_LIBRARY_PATH=/opt/myapp/lib ./my_app
+# 或在 CMake 的 ctest 配置中：
+# set_tests_properties(my_test PROPERTIES
+#     ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/libvoice")</code></pre>
+  </div>
+</div>
+
+<hr>
+
+<h2>五、综合工程：Monorepo 下的 CMake 配置</h2>
+
+<p>如果你的 .so 和前端在同一个仓库里（大多数内部项目的实际情况），可以用一个顶层 CMakeLists.txt 统一管理。但关键约束不变：<strong>前端仍然不链接 .so</strong>。</p>
+
+<pre><code># ============================================================
+# 顶层 CMakeLists.txt
+# ============================================================
+cmake_minimum_required(VERSION 3.14)
+project(voice_assistant VERSION 1.0.0 LANGUAGES C CXX)
+
+# 全局设置
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)       # 全局默认隐藏
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
+# ── 语音引擎 .so ──────────────────────────────
+add_subdirectory(libvoice)
+
+# ── Qt 前端 ───────────────────────────────────
+add_subdirectory(frontend)
+
+# 注意：没有 target_link_libraries(frontend voice)
+#       前端通过 dlopen 运行时加载 .so
+
+# 但我们可以添加构建依赖——确保 .so 先于前端编译
+# （仅当你在测试中需要运行前端时有用）
+add_dependencies(my_app voice)</code></pre>
+
+<pre><code># ============================================================
+# libvoice/CMakeLists.txt（简化版）
+# ============================================================
+add_library(voice SHARED
+    src/voice_c_api.cpp
+    src/VoiceEngine.cpp
+)
+
+include(GenerateExportHeader)
+generate_export_header(voice
+    BASE_NAME voice
+    EXPORT_FILE_NAME include/voice_export.h
+)
+
+set_target_properties(voice PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN  ON
+    VERSION  ${PROJECT_VERSION}
+    SOVERSION 1
+)
+
+target_include_directories(voice
+    PUBLIC  include
+    PRIVATE src
+)
+
+# 构建后，.so 在 ${CMAKE_BINARY_DIR}/libvoice/libvoice.so.1.2.0
+# CMake 同时创建符号链接 libvoice.so.1 和 libvoice.so</code></pre>
+
+<div class="callout tip">
+  <strong>开发时的便利技巧：</strong> 在 CMake 中 define 一个宏，让前端代码可以找到 build 目录下的 .so：
+<pre><code># frontend/CMakeLists.txt
+target_compile_definitions(my_app PRIVATE
+    VOICE_SO_PATH="${CMAKE_BINARY_DIR}/libvoice/libvoice.so"
+)
+
+// VoiceModuleLoader.cpp
+void* handle = dlopen(VOICE_SO_PATH, RTLD_NOW);
+// 编译时 VOICE_SO_PATH 被替换为 .so 的绝对路径
+// 只在开发阶段用；发布时改为从安装路径加载</code></pre>
+</div>
+
+<hr>
+
+<h2>六、VoiceModuleLoader：一个封装 dlopen/dlsym 的 C++ 类</h2>
+
+<p>在生产代码中你不会裸调 dlopen/dlsym。下面是一个可以直接用的 RAII 封装——初始化时解析所有函数指针，析构时 dlclose：</p>
+
+<pre><code>// VoiceModuleLoader.h
+#pragma once
+#include "voice_c_api.h"  // C API 的类型定义
+#include &lt;string&gt;
+#include &lt;stdexcept&gt;
+
+struct VoiceModule {
+    // 函数指针——一次性全部解析并缓存
+    VoiceEngineHandle* (*create) (const char*);
+    void               (*destroy)(VoiceEngineHandle*);
+    int                (*start)  (VoiceEngineHandle*, const char*, int);
+    int                (*stop)   (VoiceEngineHandle*);
+    const char*        (*version)(void);
+
+    VoiceModule() = default;
+    explicit operator bool() const { return create != nullptr; }
+};
+
+class VoiceModuleLoader {
+public:
+    explicit VoiceModuleLoader(const std::string& so_path);
+    ~VoiceModuleLoader();
+
+    // 不可拷贝
+    VoiceModuleLoader(const VoiceModuleLoader&) = delete;
+    VoiceModuleLoader& operator=(const VoiceModuleLoader&) = delete;
+
+    // 可移动
+    VoiceModuleLoader(VoiceModuleLoader&& other) noexcept;
+    VoiceModuleLoader& operator=(VoiceModuleLoader&& other) noexcept;
+
+    const VoiceModule& api() const { return api_; }
+
+private:
+    void*       handle_ = nullptr;
+    VoiceModule api_   = {};
+
+    void unload();
+};
+
+// VoiceModuleLoader.cpp
+#include "VoiceModuleLoader.h"
+#include &lt;dlfcn.h&gt;
+
+VoiceModuleLoader::VoiceModuleLoader(const std::string& so_path) {
+    handle_ = dlopen(so_path.c_str(), RTLD_NOW);
+    if (!handle_) {
+        throw std::runtime_error(
+            std::string("dlopen failed: ") + dlerror());
+    }
+
+    // 一次性解析所有符号——不在任何热路径上调用 dlsym
+    #define LOAD_SYM(name) \
+        api_.name = reinterpret_cast&lt;decltype(api_.name)&gt;( \
+            dlsym(handle_, "voice_engine_" #name)); \
+        if (!api_.name) { \
+            unload(); \
+            throw std::runtime_error( \
+                std::string("dlsym failed: voice_engine_") + #name); \
+        }
+
+    LOAD_SYM(create);
+    LOAD_SYM(destroy);
+    LOAD_SYM(start);
+    LOAD_SYM(stop);
+    LOAD_SYM(version);
+
+    #undef LOAD_SYM
+}
+
+VoiceModuleLoader::~VoiceModuleLoader() { unload(); }
+
+void VoiceModuleLoader::unload() {
+    if (handle_) {
+        dlclose(handle_);
+        handle_ = nullptr;
+    }
+    api_ = {};
+}
+
+// 移动构造
+VoiceModuleLoader::VoiceModuleLoader(VoiceModuleLoader&& other) noexcept
+    : handle_(other.handle_), api_(other.api_) {
+    other.handle_ = nullptr;
+    other.api_ = {};
+}</code></pre>
+
+<div class="callout">
+  <strong>设计要点回顾：</strong> (1) <code>RTLD_NOW</code>——dlopen 时就暴露符号缺失，不放炸弹；(2) 所有函数指针一次性解析——dlsym 有哈希查找+锁开销，不能放热路径；(3) RAII 管理 handle 生命周期——不依赖调用方记得 dlclose；(4) 移动语义——可以放进容器或作为成员变量传递所有权。
+</div>
+
+<hr>
+
+<h2>七、常见配置错误排查表</h2>
+
+<table class="compare">
+  <tr><th>现象</th><th>最可能的原因</th><th>修复</th></tr>
+  <tr>
+    <td><code>dlopen: cannot open shared object file</code></td>
+    <td>.so 不在搜索路径中</td>
+    <td>检查 RPATH / LD_LIBRARY_PATH / 绝对路径。用 <code>ldd ./my_app</code> 看 RPATH 是否写入了。</td>
+  </tr>
+  <tr>
+    <td><code>dlsym: undefined symbol</code></td>
+    <td>符号被 visibility=hidden 隐藏了</td>
+    <td>检查该函数是否有 <code>VOICE_API</code> 宏。用 <code>nm -D libvoice.so | grep 函数名</code> 验证。</td>
+  </tr>
+  <tr>
+    <td><code>dlsym: undefined symbol</code>（但 nm -D 能看到）</td>
+    <td>extern "C" 忘记了——符号名被 mangle 了</td>
+    <td>用 <code>nm -D libvoice.so | grep 函数名</code> 看输出。如果有 <code>_Z</code> 前缀就是 name mangling 还在。</td>
+  </tr>
+  <tr>
+    <td>dlopen 成功后 dlsym 返回 NULL</td>
+    <td>符号名拼写不匹配（大小写、前缀等）</td>
+    <td>用 <code>nm -D</code> 确认确切的符号名字符串，逐字符对比。</td>
+  </tr>
+  <tr>
+    <td>dlclose 后 crash</td>
+    <td>还有线程在使用 .so 中的代码/数据</td>
+    <td>确保所有使用 .so 中资源的线程已 join，或永远不 dlclose（接受泄漏）。</td>
+  </tr>
+  <tr>
+    <td>生成的 voice_export.h 路径找不到</td>
+    <td>generate_export_header 的产物在 build 目录</td>
+    <td>记得在 target_include_directories 中加 <code>$&lt;BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include&gt;</code></td>
+  </tr>
+  <tr>
+    <td>VERSION/SOVERSION 设置了但没看到符号链接</td>
+    <td>只有 make install 后才创建符号链接</td>
+    <td>build 目录下确实只有实名文件。符号链接是 install 步骤创建的。这不是 bug。</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>自测</h2>
+
+<div class="quiz" id="q1-container">
+  <p class="q">问题 1：CMake 中 <code>CXX_VISIBILITY_PRESET hidden</code> 等效于哪个编译器选项？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. <code>-fPIC</code></div>
+    <div class="opt" data-id="b">B. <code>-fvisibility=hidden</code></div>
+    <div class="opt" data-id="c">C. <code>-fvisibility-inlines-hidden</code></div>
+    <div class="opt" data-id="d">D. <code>-Wl,--exclude-libs,ALL</code></div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q1-container', 'b')">提交</button>
+</div>
+
+<div class="quiz" id="q2-container">
+  <p class="q">问题 2：前端 CMakeLists.txt 中正确的链接方式是什么？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. <code>target_link_libraries(my_app PRIVATE voice)</code></div>
+    <div class="opt" data-id="b">B. <code>target_link_libraries(my_app PRIVATE dl)</code> 或 <code>${CMAKE_DL_LIBS}</code></div>
+    <div class="opt" data-id="c">C. 不需要链接任何库——dlopen 是系统调用</div>
+    <div class="opt" data-id="d">D. <code>target_link_libraries(my_app PRIVATE voice dl)</code></div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q2-container', 'b')">提交</button>
+</div>
+
+<div class="quiz" id="q3-container">
+  <p class="q">问题 3：设置了 <code>SOVERSION 1</code> 和 <code>VERSION 1.2.0</code> 后，<code>make install</code> 创建的符号链接链是什么？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. <code>libvoice.so → libvoice.so.1.2.0</code> 和 <code>libvoice.so.1.2.0</code></div>
+    <div class="opt" data-id="b">B. <code>libvoice.so → libvoice.so.1 → libvoice.so.1.2.0</code></div>
+    <div class="opt" data-id="c">C. <code>libvoice.so.1.2.0 → libvoice.so</code></div>
+    <div class="opt" data-id="d">D. 只有 <code>libvoice.so.1.2.0</code>——符号链接需要手动创建</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q3-container', 'b')">提交</button>
+</div>
+
+<script>
+function check(containerId, correctId) {
+  const container = document.getElementById(containerId);
+  const opts = container.querySelectorAll('.opt');
+  const fb = container.querySelector('.feedback');
+  const btn = container.querySelector('button');
+  let selected = null;
+  opts.forEach(o => {
+    o.classList.remove('selected','correct','wrong');
+    if (o.classList.contains('chosen')) selected = o.dataset.id;
+  });
+  if (!selected) { fb.textContent = '请先选择一个选项。'; fb.className = 'feedback'; return; }
+  opts.forEach(o => {
+    o.style.pointerEvents = 'none';
+    if (o.dataset.id === correctId) o.classList.add('correct');
+    else if (o.dataset.id === selected) o.classList.add('wrong');
+  });
+  if (selected === correctId) {
+    fb.textContent = '✓ 正确！';
+    fb.className = 'feedback correct-fb';
+  } else {
+    fb.textContent = '✗ 不对，再想想。正确答案已标绿。';
+    fb.className = 'feedback wrong-fb';
+  }
+  btn.disabled = true;
+}
+document.querySelectorAll('.quiz .opt').forEach(opt => {
+  opt.addEventListener('click', function() {
+    const container = this.closest('.quiz');
+    container.querySelectorAll('.opt').forEach(o => o.classList.remove('chosen','selected'));
+    this.classList.add('chosen','selected');
+  });
+});
+</script>
+
+<hr>
+
+<h2>进一步阅读</h2>
+
+<ul>
+  <li><a href="https://cmake.org/cmake/help/latest/module/GenerateExportHeader.html" target="_blank">CMake GenerateExportHeader 文档</a> —— 生成导出宏的官方模块</li>
+  <li><a href="https://cmake.org/cmake/help/latest/prop_tgt/CXX_VISIBILITY_PRESET.html" target="_blank">CMake CXX_VISIBILITY_PRESET 文档</a></li>
+  <li><a href="https://cmake.org/cmake/help/latest/prop_tgt/VERSION.html" target="_blank">CMake VERSION / SOVERSION 属性文档</a></li>
+  <li><a href="https://gitlab.kitware.com/cmake/community/-/wikis/doc/cmake/RPATH-handling" target="_blank">CMake RPATH 处理指南</a> —— Kitware 官方的 RPATH 最佳实践</li>
+</ul>
+
+<div class="meta">
+  <p>
+    <strong>上一课：</strong> <a href="./0004-symbol-visibility-versioning.html">符号可见性控制与 SO 版本管理</a><br>
+    <strong>系列状态：</strong> 五节课 + 一节拓展课。你已覆盖了 C 桥接 + dlsym/dlopen 的完整知识栈：动机 → 陷阱 → 原理 → 发布 → 构建。<br>
+    <strong>有问题？</strong> 直接问我——配置细节、调试命令、某个具体场景的 CMake 写法，都可以展开。
+  </p>
+  <p style="margin-top:0.5em;">创建于 2026-08-01 · 课程 0005</p>
+</div>
+
+</body>
+</html>

@@ -49,7 +49,19 @@
   "theme": "dark-ansi",
   "autoCompactEnabled": true,
   "skillOverrides": {
-    "tldr": "user-invocable-only"
+    "tldr": "user-invocable-only",
+    "qt-cmake-project": "off",
+    "qt-cpp-docs": "off",
+    "qt-cpp-review": "off",
+    "qt-figma-component-generation": "off",
+    "qt-figma-token-extraction": "off",
+    "qt-qml": "off",
+    "qt-qml-docs": "off",
+    "qt-qml-profiler": "off",
+    "qt-qml-review": "off",
+    "qt-qml-test": "off",
+    "qt-qml-test-run": "off",
+    "qt-ui-design": "off"
   },
   "hooks": {
     "PreToolUse": [

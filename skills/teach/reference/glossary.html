@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>术语表 — C/C++ 动态库加载与 ABI</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>术语表</h1>
+<p style="color:var(--muted);">工作区通用参考 · 持续更新</p>
+
+<hr>
+
+<dl>
+
+<dt id="abi" style="font-weight:700; margin-top:1.2em;">ABI（Application Binary Interface）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  二进制接口——编译后的代码如何互相调用。包括：符号名规则、函数调用约定（参数怎么传）、对象内存布局（成员偏移量、vtable 结构）。<br>
+  区别于 API（Application Programming Interface）——API 是源码层面的契约，ABI 是二进制层面的契约。C 有稳定的 ABI，C++ 没有。
+</dd>
+
+<dt id="name-mangling" style="font-weight:700; margin-top:1.2em;">Name Mangling（名字修饰）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  C++ 编译器将函数名、命名空间、参数类型编码进一个全局唯一字符串的过程。例如 <code>void f(int)</code> 可能变成 <code>_Z1fi</code>。<br>
+  这使得函数重载和命名空间成为可能，但不同编译器的编码规则不同，导致链接不兼容。
+</dd>
+
+<dt id="extern-c" style="font-weight:700; margin-top:1.2em;">extern "C"</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  C++ 关键字，告诉编译器对指定的函数使用 C 链接方式——关闭 Name Mangling。这是 C/C++ 互操作的基础。
+</dd>
+
+<dt id="opaque-pointer" style="font-weight:700; margin-top:1.2em;">不透明指针（Opaque Pointer / Pimpl）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  一个前向声明的结构体指针，其完整定义只在实现文件中可见。调用方只能持有指针，不能解引用。<br>
+  C 桥接层用它来"隐藏" C++ 对象——前端永远不知道 <code>VoiceEngineHandle</code> 里有什么。
+</dd>
+
+<dt id="dlopen" style="font-weight:700; margin-top:1.2em;">dlopen / dlsym / dlclose</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  POSIX 标准中用于运行时加载动态库的 API。<br>
+  <code>dlopen(path, flags)</code> — 将 .so 加载到进程地址空间<br>
+  <code>dlsym(handle, "symbol")</code> — 按字符串名查找函数/变量地址<br>
+  <code>dlclose(handle)</code> — 卸载动态库
+</dd>
+
+<dt id="elf" style="font-weight:700; margin-top:1.2em;">ELF（Executable and Linkable Format）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+    Linux/Unix 系统的可执行文件和共享库标准格式。包含: ELF Header、Program Header Table、Section Header Table、.text/.data/.rodata/.bss 等段。<br>
+    .so 文件是 ET_DYN 类型的 ELF 文件——Program Header Table 中的 PT_LOAD 条目告诉内核如何 mmap。
+</dd>
+
+<dt id="plt-got" style="font-weight:700; margin-top:1.2em;">PLT / GOT（延迟绑定机制）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+    <strong>PLT</strong> (Procedure Linkage Table): 每个外部函数调用的跳板桩代码。<br>
+    <strong>GOT</strong> (Global Offset Table): 存储函数实际地址的表。RTLD_LAZY 时，首次调用触发 _dl_runtime_resolve 解析符号并改写 GOT，后续调用直接跳转到函数真实地址。
+</dd>
+
+<dt id="link-map" style="font-weight:700; margin-top:1.2em;">link_map（动态链接器内部结构）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+    动态链接器为每个已加载 .so 维护的内部数据结构。记录: 加载基址 (l_addr)、符号表位置、字符串表位置、依赖链、引用计数。<br>
+    dlopen 返回的 void* handle 实际指向这个结构体。
+</dd>
+
+<dt id="demand-paging" style="font-weight:700; margin-top:1.2em;">Demand Paging（按需调页）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+    内核惰性加载机制：mmap 只分配虚拟地址空间，物理页在首次访问时通过缺页中断 (page fault) 按需加载。<br>
+    dlopen 大 .so 文件几乎是瞬时完成——真正的磁盘 I/O 推迟到代码执行时才发生。
+</dd>
+
+<dt id="compilation-firewall" style="font-weight:700; margin-top:1.2em;">编译防火墙（Compilation Firewall）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  一种设计模式：模块 A 依赖模块 B 的<em>接口</em>但不依赖其<em>实现细节</em>。B 内部任意修改不会触发 A 重新编译。<br>
+  C 桥接层本身就是一道编译防火墙——前端只 include 纯 C 头文件，不依赖任何 C++ 实现头文件。
+</dd>
+
+
+<dt id="relocation" style="font-weight:700; margin-top:1.2em;">重定位（Relocation）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  链接器将目标文件中占位符地址替换为最终运行时地址的过程。.o 文件中的 .rela.text 段记录了需要重定位的位置和对应的符号。分为静态重定位（链接时）和动态重定位（运行时，通过 PLT/GOT）。
+</dd>
+
+<dt id="symbol-resolution" style="font-weight:700; margin-top:1.2em;">符号解析（Symbol Resolution）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  链接器将每个目标文件中"未定义的符号引用"与其他目标文件或库中的"符号定义"进行匹配的过程。如果找不到匹配的定义，链接器报 <code>undefined reference to 'xxx'</code> 错误。链接器根据字符串名匹配符号，不关心类型签名。
+</dd>
+
+<dt id="static-library" style="font-weight:700; margin-top:1.2em;">静态库（.a / Static Library）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  多个 .o 文件的归档（ar archive）。链接器从中按需提取被引用符号所在的 .o，将代码和数据复制进最终可执行文件。链接后不再需要 .a 文件。无法用 dlopen 加载。
+</dd>
+
+<dt id="et-rel" style="font-weight:700; margin-top:1.2em;">ET_REL / ET_EXEC / ET_DYN（ELF 文件类型）</dt>
+<dd style="margin:0 0 0.8em 1.5em; color:var(--muted);">
+  <strong>ET_REL</strong>：可重定位目标文件（.o），段地址未确定，含重定位信息。<br>
+  <strong>ET_EXEC</strong>：可执行文件，段地址已固定，重定位已完成。<br>
+  <strong>ET_DYN</strong>：共享库（.so），位置无关代码（PIC），可加载到任意地址。
+</dd>
+
+</dl>
+
+<hr>
+
+<div class="meta">
+  <p>创建于 2026-08-01 · 随课程进度持续更新</p>
+</div>
+
+</body>
+</html>

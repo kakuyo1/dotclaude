@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0006：链接器到底做了什么——从 .o 到可执行文件</title>
+<link rel="stylesheet" href="../assets/style.css">
+<style>
+  .fig { margin: 1.5rem 0; text-align: center; }
+  .fig svg { max-width: 100%; height: auto; }
+  .fig .caption { font-size: 0.85em; color: var(--muted); margin-top: 0.5em; }
+
+  /* Pipeline steps */
+  .pipeline-row { display: flex; align-items: center; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; justify-content: center; }
+  .pipeline-step { border: 1px solid var(--rule); border-radius: 6px; padding: 0.6em 1em; text-align: center; min-width: 90px; background: #fafafa; }
+  .pipeline-step .label { font-size: 0.8em; color: var(--muted); display: block; }
+  .pipeline-step .name { font-weight: 700; font-size: 0.95em; }
+  .pipeline-step.highlight { border-color: var(--accent); border-width: 2px; background: #fff8f0; }
+  .pipeline-arrow { font-size: 1.2em; color: var(--muted); }
+
+  /* Section color legend */
+  .sec-legend { display: flex; gap: 1em; margin: 0.8rem 0; flex-wrap: wrap; font-size: 0.85em; }
+  .sec-legend span { display: inline-block; width: 14px; height: 14px; border-radius: 2px; margin-right: 4px; vertical-align: middle; border: 1px solid rgba(0,0,0,0.15); }
+
+  /* Two-column */
+  .col2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin: 1rem 0; }
+  @media (max-width: 650px) { .col2 { grid-template-columns: 1fr; } }
+
+  /* Step-by-step walkthrough */
+  .steps { counter-reset: step; margin: 1rem 0; }
+  .steps .s { margin-bottom: 1.2rem; padding: 0.8em 1em; border-left: 3px solid var(--rule); background: #fafafa; border-radius: 0 6px 6px 0; }
+  .steps .s::before { counter-increment: step; content: counter(step); display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: var(--accent); color: #fff; border-radius: 50%; font-size: 0.8em; font-weight: 700; margin-right: 0.6em; }
+
+  /* cli output */
+  .cli { background: #1e1e1e; color: #d4d4d4; padding: 0.8em 1em; border-radius: 6px; font-family: "JetBrains Mono", "Fira Code", monospace; font-size: 0.82em; line-height: 1.6; margin: 0.8rem 0; overflow-x: auto; white-space: pre; }
+  .cli .prompt { color: #6a9955; }
+  .cli .cmd { color: #dcdcaa; }
+  .cli .hl { color: #569cd6; }
+
+  /* inline terminal */
+  .term-line { display: flex; gap: 0.5em; }
+  .term-line .p { color: #6a9955; user-select: none; }
+</style>
+</head>
+<body>
+
+<h1>0006 · 链接器到底做了什么</h1>
+<p style="color:var(--muted); font-size:1rem;">符号解析 · 重定位 · PLT/GOT —— 从 .o 到可执行文件的全过程</p>
+
+<hr>
+
+<p>
+  前几课我们聚焦在 <strong>运行时</strong>：dlopen 怎么加载 .so、dlsym 怎么查符号、
+  桥接层怎么写。这节课我们往上游走——在 dlopen 之前，<strong>链接器</strong>（linker）已经做了一大堆工作。
+  理解链接器，你才能真正理解：
+</p>
+
+<ul>
+  <li>为什么 <code>undefined symbol</code> 错误会在链接时而不是编译时报</li>
+  <li>为什么 C++ 的 name mangling 会让链接器找不到符号</li>
+  <li>PLT/GOT 到底是怎么"自动修复"函数地址的</li>
+  <li>静态库（.a）和动态库（.so）的本质区别是什么</li>
+</ul>
+
+<blockquote>
+  主要参考：<a href="https://refspecs.linuxfoundation.org/elf/elf.pdf" target="_blank">ELF Specification</a>、
+  <a href="https://www.akkadia.org/drepper/dsohowto.pdf" target="_blank">Drepper: How To Write Shared Libraries</a>、
+  Ian Lance Taylor 的 <a href="https://lwn.net/Articles/276782/" target="_blank">20-part linker essay</a>（LWN）。
+</blockquote>
+
+<hr>
+
+<h2>一、完整管线：从源代码到进程</h2>
+
+<p>当你写完 <code>main.cpp</code> 敲下回车，到程序真正运行起来，中间经过 4 个阶段。<strong>链接是第 3 阶段</strong>——它夹在编译和加载之间，是很多人理解链条中最模糊的一环。</p>
+
+<div class="fig">
+<svg viewBox="0 0 720 200" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <marker id="ar" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#888"/>
+    </marker>
+    <filter id="sh"><feDropShadow dx="1" dy="1" stdDeviation="1.5" flood-opacity="0.12"/></filter>
+  </defs>
+
+  <!-- Stage 1: Preprocess + Compile -->
+  <rect x="8" y="30" width="155" height="130" rx="8" fill="#fff3e0" stroke="#ff9800" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="85" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#e65100">① 预处理 + 编译</text>
+  <text x="85" y="78" text-anchor="middle" font-size="10" fill="#555">g++ -c main.cpp</text>
+  <rect x="25" y="90" width="120" height="18" rx="3" fill="#ffcc80"/>
+  <text x="85" y="103" text-anchor="middle" font-size="9" fill="#333">main.cpp → main.o</text>
+  <text x="85" y="130" text-anchor="middle" font-size="9" fill="#888">#include 展开、模板实例化</text>
+  <text x="85" y="145" text-anchor="middle" font-size="9" fill="#888">C++ → 汇编 → 机器码</text>
+
+  <line x1="163" y1="95" x2="190" y2="95" stroke="#888" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Stage 2: Assemble (bundled in compile for most compilers, but conceptually separate) -->
+  <rect x="195" y="30" width="145" height="130" rx="8" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="267" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#2a7d2a">② 汇编</text>
+  <text x="267" y="78" text-anchor="middle" font-size="10" fill="#555">as main.s -o main.o</text>
+  <rect x="212" y="90" width="110" height="18" rx="3" fill="#a5d6a7"/>
+  <text x="267" y="103" text-anchor="middle" font-size="9" fill="#333">汇编 → 机器码</text>
+  <text x="267" y="130" text-anchor="middle" font-size="9" fill="#888">生成 ELF 目标文件</text>
+  <text x="267" y="145" text-anchor="middle" font-size="9" fill="#888">含 .text/.data/重定位表</text>
+
+  <line x1="340" y1="95" x2="367" y2="95" stroke="#888" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Stage 3: Link - THIS IS THE FOCUS -->
+  <rect x="372" y="20" width="175" height="150" rx="8" fill="#fff8e1" stroke="#c44" stroke-width="2.5" filter="url(#sh)"/>
+  <text x="460" y="50" text-anchor="middle" font-size="14" font-weight="700" fill="#c44">③ 链接 ← 本课重点</text>
+  <text x="460" y="70" text-anchor="middle" font-size="10" fill="#555">ld / gold / lld / mold</text>
+  <rect x="390" y="84" width="140" height="20" rx="3" fill="#ffcdd2"/>
+  <text x="460" y="98" text-anchor="middle" font-size="9" fill="#333">多个 .o → 一个 executable</text>
+  <text x="460" y="124" text-anchor="middle" font-size="9" fill="#888">· 符号解析 (symbol resolution)</text>
+  <text x="460" y="142" text-anchor="middle" font-size="9" fill="#888">· 重定位 (relocation)</text>
+  <text x="460" y="160" text-anchor="middle" font-size="9" fill="#888">· 段合并 (section merging)</text>
+
+  <line x1="547" y1="95" x2="574" y2="95" stroke="#888" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Stage 4: Load -->
+  <rect x="579" y="30" width="130" height="130" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="644" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1565c0">④ 加载</text>
+  <text x="644" y="78" text-anchor="middle" font-size="10" fill="#555">./myapp</text>
+  <rect x="595" y="90" width="98" height="18" rx="3" fill="#90caf9"/>
+  <text x="644" y="103" text-anchor="middle" font-size="9" fill="#333">execve() → ld-linux</text>
+  <text x="644" y="130" text-anchor="middle" font-size="9" fill="#888">mmap 可执行文件</text>
+  <text x="644" y="145" text-anchor="middle" font-size="9" fill="#888">加载依赖 .so</text>
+
+</svg>
+<div class="caption">图 1：从源代码到进程的 4 个阶段。链接器（③）是理解整个体系的核心枢纽——向前连接编译，向后连接加载。</div>
+</div>
+
+<div class="callout tip">
+  <strong>类比帮助记忆：</strong> 链接器就像一个"拼图工"。它拿到了多块拼图（.o 文件），每块拼图上有些凸起（导出的符号定义）和凹槽（引用了但未定义的符号）。它的工作是把所有拼图对在一起——填补凹槽、对齐凸起——最终拼出一幅完整的画（可执行文件或 .so）。
+</div>
+
+<hr>
+
+<h2>二、拆解一个 .o 文件：里面到底有什么</h2>
+
+<p>要理解链接器，先要理解它的输入——目标文件（object file）。我们用一段最简单的 C 代码来演示。</p>
+
+<pre><code>// voice_engine.c
+#include &lt;stdio.h&gt;
+
+int g_volume = 80;           // 已初始化的全局变量 → .data
+
+void set_volume(int v) {     // 函数定义 → .text
+    g_volume = v;
+}
+
+void say_hello(void) {       // 函数定义 → .text
+    printf("hello\n");       // printf: 未定义符号 → 需要重定位
+}</code></pre>
+
+<p>编译成目标文件后：</p>
+
+<div class="cli">
+<span class="prompt">$ </span><span class="cmd">gcc -c voice_engine.c -o voice_engine.o</span>
+<span class="prompt">$ </span><span class="cmd">file voice_engine.o</span>
+voice_engine.o: <span class="hl">ELF 64-bit LSB relocatable</span>, x86-64, version 1 (SYSV)
+</div>
+
+<div class="sec-legend">
+  <span><span style="background:#fff3e0"></span> .text（代码）</span>
+  <span><span style="background:#e8f5e9"></span> .data（已初始化数据）</span>
+  <span><span style="background:#e3f2fd"></span> .rodata（只读数据）</span>
+  <span><span style="background:#fff8e1"></span> .bss（未初始化数据）</span>
+  <span><span style="background:#f3e5f5"></span> .symtab（符号表）</span>
+  <span><span style="background:#fce4ec"></span> .rela.text（重定位表）</span>
+  <span><span style="background:#eceff1"></span> .strtab（字符串表）</span>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 680 490" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <filter id="sh2"><feDropShadow dx="1" dy="1" stdDeviation="1.5" flood-opacity="0.1"/></filter>
+  </defs>
+
+  <!-- File boundary -->
+  <rect x="20" y="10" width="640" height="470" rx="8" fill="#fafafa" stroke="#bbb" stroke-width="1.5"/>
+  <text x="340" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#555">voice_engine.o — ELF 64-bit relocatable</text>
+
+  <!-- ELF Header -->
+  <rect x="40" y="50" width="600" height="36" rx="4" fill="#eceff1" stroke="#bbb" stroke-width="1"/>
+  <text x="340" y="73" text-anchor="middle" font-size="12" font-weight="600">ELF Header: 魔数 0x7F'E''L''F', 架构 x86-64, 类型 REL (可重定位)</text>
+
+  <!-- Sections as blocks -->
+  <!-- .text -->
+  <rect x="40" y="100" width="290" height="85" rx="5" fill="#fff3e0" stroke="#ff9800" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="185" y="120" text-anchor="middle" font-size="12" font-weight="700" fill="#e65100">.text（代码段）</text>
+  <text x="185" y="138" text-anchor="middle" font-size="10" fill="#555">0x00: set_volume 的机器码</text>
+  <text x="185" y="154" text-anchor="middle" font-size="10" fill="#555">0x28: say_hello 的机器码</text>
+  <text x="185" y="170" text-anchor="middle" font-size="10" fill="#555">|→ 其中 0x32 处: call 0x00000000</text>
+  <text x="185" y="184" text-anchor="middle" font-size="9" fill="#c44">↑ 占位符! 链接时替换为 printf 地址</text>
+
+  <!-- .data -->
+  <rect x="345" y="100" width="295" height="85" rx="5" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="492" y="120" text-anchor="middle" font-size="12" font-weight="700" fill="#2a7d2a">.data（已初始化数据）</text>
+  <text x="492" y="138" text-anchor="middle" font-size="10" fill="#555">g_volume = 80（4 字节）</text>
+  <text x="492" y="158" text-anchor="middle" font-size="10" fill="#555">在文件中占据实际空间</text>
+
+  <!-- .rodata -->
+  <rect x="40" y="200" width="290" height="50" rx="5" fill="#e3f2fd" stroke="#1976d2" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="185" y="220" text-anchor="middle" font-size="12" font-weight="700" fill="#1565c0">.rodata（只读数据）</text>
+  <text x="185" y="240" text-anchor="middle" font-size="10" fill="#555">"hello\n" 字符串常量</text>
+
+  <!-- .symtab -->
+  <rect x="345" y="200" width="295" height="50" rx="5" fill="#f3e5f5" stroke="#9c27b0" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="492" y="220" text-anchor="middle" font-size="12" font-weight="700" fill="#7b1fa2">.symtab（符号表）</text>
+  <text x="492" y="240" text-anchor="middle" font-size="10" fill="#555">set_volume(.text+0x00) · say_hello(.text+0x28) · g_volume(.data+0x00) · printf(UND)</text>
+
+  <!-- .rela.text -->
+  <rect x="40" y="265" width="290" height="65" rx="5" fill="#fce4ec" stroke="#e53935" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="185" y="285" text-anchor="middle" font-size="12" font-weight="700" fill="#c62828">.rela.text（重定位表）</text>
+  <text x="185" y="303" text-anchor="middle" font-size="10" fill="#555">偏移 0x32: R_X86_64_PLT32 → printf</text>
+  <text x="185" y="319" text-anchor="middle" font-size="10" fill="#555">告诉链接器："在 .text 偏移 0x32 处填入 printf 的地址"</text>
+
+  <!-- .strtab -->
+  <rect x="345" y="265" width="295" height="65" rx="5" fill="#eceff1" stroke="#90a4ae" stroke-width="1.5" filter="url(#sh2)"/>
+  <text x="492" y="285" text-anchor="middle" font-size="12" font-weight="700" fill="#546e7a">.strtab（字符串表）</text>
+  <text x="492" y="303" text-anchor="middle" font-size="10" fill="#555">所有符号名的 C 字符串</text>
+  <text x="492" y="319" text-anchor="middle" font-size="10" fill="#555">"set_volume\0say_hello\0g_volume\0printf\0"</text>
+
+  <!-- Arrows from .rela to .text and .symtab showing the connection -->
+  <line x1="185" y1="330" x2="185" y2="350" stroke="#c62828" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="185" y1="350" x2="492" y2="350" stroke="#c62828" stroke-width="1" stroke-dasharray="4,2"/>
+  <line x1="492" y1="350" x2="492" y2="330" stroke="#c62828" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="340" y="365" text-anchor="middle" font-size="9" fill="#c62828">.rela.text 指向 .symtab 中的符号记录 + .text 中的偏移</text>
+
+  <!-- .comment / .note -->
+  <rect x="40" y="385" width="600" height="30" rx="4" fill="#f5f5f5" stroke="#ddd" stroke-width="1"/>
+  <text x="340" y="404" text-anchor="middle" font-size="10" fill="#888">.comment · .note.GNU-stack · .eh_frame（编译器元数据）</text>
+
+  <!-- Section Header Table pointer at bottom -->
+  <rect x="40" y="425" width="600" height="30" rx="4" fill="#eceff1" stroke="#bbb" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="340" y="444" text-anchor="middle" font-size="10" fill="#888">Section Header Table（段的索引目录——描述每个段的名称、类型、偏移、大小）</text>
+</svg>
+<div class="caption">图 2：voice_engine.o 的内部结构。重定位表 .rela.text 是连接代码和符号的关键——它记录了"哪些位置需要在链接时填入最终地址"。</div>
+</div>
+
+<div class="callout">
+  <strong>两种 ELF 文件类型的区别：</strong>
+  <ul style="margin-top:0.3em;">
+    <li><code>ET_REL</code>（目标文件 .o）：段尚未分配最终地址，包含重定位信息——链接器的<strong>输入</strong></li>
+    <li><code>ET_EXEC</code>（可执行文件）：段地址已固定，重定位已完成——加载器的<strong>输入</strong></li>
+    <li><code>ET_DYN</code>（共享库 .so）：位置无关代码，可在任意地址加载，但仍可能需要运行时重定位</li>
+  </ul>
+</div>
+
+<h3>自己动手：用 readelf 查看 .o 文件</h3>
+
+<div class="cli">
+<span class="prompt">$ </span><span class="cmd">readelf -S voice_engine.o</span>    <span class="hl"># 列出所有段</span>
+<span class="prompt">$ </span><span class="cmd">readelf -s voice_engine.o</span>    <span class="hl"># 查看符号表</span>
+Symbol table '.symtab' contains 10 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     5: 0000000000000000    26 FUNC    <span class="hl">GLOBAL</span> DEFAULT    1 set_volume
+     6: 000000000000001a    30 FUNC    <span class="hl">GLOBAL</span> DEFAULT    1 say_hello
+     7: 0000000000000000     4 OBJECT  <span class="hl">GLOBAL</span> DEFAULT    2 g_volume
+     9: 0000000000000000     0 NOTYPE  <span class="hl">GLOBAL</span> DEFAULT  <span class="hl">UND</span> printf
+<span class="prompt">$ </span><span class="cmd">readelf -r voice_engine.o</span>    <span class="hl"># 查看重定位表</span>
+Relocation section '.rela.text' at offset 0x248 contains 2 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000000032  000900000004 R_X86_64_PLT32    0000000000000000 printf - 4
+</div>
+
+<p style="font-size:0.85em; color:var(--muted);">
+  关键观察：printf 的 <code>Ndx = UND</code> 表示它在当前 .o 中<strong>未定义</strong>——这就是链接器要去找的东西。
+</p>
+
+<hr>
+
+<h2>三、静态链接：链接器如何合并多个 .o 文件</h2>
+
+<p>假设我们有两个目标文件：<code>main.o</code> 调用了 <code>say_hello()</code> 和引用了 <code>g_volume</code>，而 <code>voice_engine.o</code> 定义了它们。链接器需要做两件事：<strong>符号解析</strong>和<strong>重定位</strong>。</p>
+
+<h3>第一步：符号解析——匹配定义与引用</h3>
+
+<div class="fig">
+<svg viewBox="0 0 700 340" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <filter id="sh3"><feDropShadow dx="1" dy="1" stdDeviation="1.5" flood-opacity="0.1"/></filter>
+    <marker id="ar2" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#1976d2"/>
+    </marker>
+    <marker id="ar3" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#c44"/>
+    </marker>
+  </defs>
+
+  <!-- main.o -->
+  <rect x="15" y="15" width="200" height="310" rx="6" fill="#fafafa" stroke="#1976d2" stroke-width="2" filter="url(#sh3)"/>
+  <text x="115" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#1565c0">main.o</text>
+
+  <rect x="30" y="55" width="170" height="50" rx="4" fill="#fff3e0" stroke="#ff9800" stroke-width="1"/>
+  <text x="115" y="72" text-anchor="middle" font-size="10" fill="#555">.text</text>
+  <text x="115" y="90" text-anchor="middle" font-size="9" fill="#888">call say_hello</text>
+
+  <rect x="30" y="115" width="170" height="65" rx="4" fill="#f3e5f5" stroke="#9c27b0" stroke-width="1"/>
+  <text x="115" y="132" text-anchor="middle" font-size="10" fill="#555">.symtab</text>
+  <text x="115" y="148" text-anchor="middle" font-size="9" fill="#888">main (定义, .text)</text>
+  <text x="115" y="162" text-anchor="middle" font-size="9" fill="#c44">say_hello (UND, 未定义)</text>
+  <text x="115" y="176" text-anchor="middle" font-size="9" fill="#c44">g_volume (UND, 未定义)</text>
+
+  <rect x="30" y="190" width="170" height="45" rx="4" fill="#fce4ec" stroke="#e53935" stroke-width="1"/>
+  <text x="115" y="207" text-anchor="middle" font-size="10" fill="#555">.rela.text</text>
+  <text x="115" y="225" text-anchor="middle" font-size="9" fill="#888">offset X → say_hello</text>
+
+  <!-- voice_engine.o -->
+  <rect x="485" y="15" width="200" height="310" rx="6" fill="#fafafa" stroke="#4caf50" stroke-width="2" filter="url(#sh3)"/>
+  <text x="585" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#2a7d2a">voice_engine.o</text>
+
+  <rect x="500" y="55" width="170" height="65" rx="4" fill="#fff3e0" stroke="#ff9800" stroke-width="1"/>
+  <text x="585" y="72" text-anchor="middle" font-size="10" fill="#555">.text</text>
+  <text x="585" y="90" text-anchor="middle" font-size="9" fill="#888">set_volume 机器码</text>
+  <text x="585" y="108" text-anchor="middle" font-size="9" fill="#888">say_hello 机器码</text>
+
+  <rect x="500" y="130" width="170" height="50" rx="4" fill="#e8f5e9" stroke="#4caf50" stroke-width="1"/>
+  <text x="585" y="147" text-anchor="middle" font-size="10" fill="#555">.data</text>
+  <text x="585" y="163" text-anchor="middle" font-size="9" fill="#888">g_volume = 80</text>
+
+  <rect x="500" y="190" width="170" height="75" rx="4" fill="#f3e5f5" stroke="#9c27b0" stroke-width="1"/>
+  <text x="585" y="207" text-anchor="middle" font-size="10" fill="#555">.symtab</text>
+  <text x="585" y="223" text-anchor="middle" font-size="9" fill="#2a7d2a">set_volume (定义)</text>
+  <text x="585" y="239" text-anchor="middle" font-size="9" fill="#2a7d2a">say_hello (定义)</text>
+  <text x="585" y="255" text-anchor="middle" font-size="9" fill="#2a7d2a">g_volume (定义)</text>
+
+  <!-- Connection arrows for say_hello -->
+  <line x1="200" y1="145" x2="245" y2="145" stroke="#c44" stroke-width="2" stroke-dasharray="5,3"/>
+  <line x1="245" y1="145" x2="245" y2="230" stroke="#c44" stroke-width="2" stroke-dasharray="5,3"/>
+  <line x1="245" y1="230" x2="500" y2="230" stroke="#2a7d2a" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#ar2)"/>
+
+  <!-- Center: Linker -->
+  <text x="340" y="170" text-anchor="middle" font-size="10" fill="#c44" font-weight="600">链接器匹配:</text>
+  <text x="340" y="188" text-anchor="middle" font-size="10" fill="#555">main.o 需要 say_hello</text>
+  <text x="340" y="206" text-anchor="middle" font-size="10" fill="#555">→ 在 voice_engine.o 中找到</text>
+  <text x="340" y="224" text-anchor="middle" font-size="10" fill="#555">→ 解析成功</text>
+
+</svg>
+<div class="caption">图 3：链接器将 main.o 的"未定义引用"与 voice_engine.o 中的"定义"匹配。如果找不到定义 → <code>undefined reference to 'say_hello'</code> 错误。</div>
+</div>
+
+<h3>第二步：重定位——把占位符替换成真实地址</h3>
+
+<p>符号解析只确定了"哪个符号在哪个文件"，重定位才是真正的"填地址"。</p>
+
+<div class="fig">
+<svg viewBox="0 0 700 370" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <marker id="ar5" markerWidth="9" markerHeight="9" refX="4.5" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 Z" fill="#c44"/>
+    </marker>
+  </defs>
+
+  <!-- Before linking -->
+  <text x="180" y="25" text-anchor="middle" font-size="14" font-weight="700" fill="#888">链接前（每个 .o 都是孤岛）</text>
+
+  <rect x="15" y="40" width="330" height="140" rx="6" fill="#fafafa" stroke="#bbb" stroke-width="1"/>
+  <text x="180" y="65" text-anchor="middle" font-size="12" font-weight="600">main.o 的 .text</text>
+  <rect x="35" y="78" width="290" height="42" rx="3" fill="#fff3e0" stroke="#ffcc80" stroke-width="1"/>
+  <text x="180" y="94" text-anchor="middle" font-size="10" font-family="monospace">0x00: mov edi, 80</text>
+  <text x="180" y="110" text-anchor="middle" font-size="10" font-family="monospace">0x05: call <tspan fill="#c44" font-weight="600">0x00000000</tspan>  ← 占位符!</text>
+
+  <rect x="15" y="195" width="330" height="60" rx="6" fill="#fafafa" stroke="#bbb" stroke-width="1"/>
+  <text x="180" y="218" text-anchor="middle" font-size="12" font-weight="600">voice_engine.o 的 .text</text>
+  <rect x="35" y="230" width="290" height="18" rx="3" fill="#fff3e0" stroke="#ffcc80" stroke-width="1"/>
+  <text x="180" y="243" text-anchor="middle" font-size="10" font-family="monospace">0x28: &lt;s<tspan fill="#c44" font-weight="600">ay_hello</tspan>&gt;: push rbp ...</text>
+
+  <!-- Big arrow -->
+  <text x="480" y="145" text-anchor="middle" font-size="28" fill="#c44" font-weight="700">→ 链接器 →</text>
+
+  <!-- After linking -->
+  <text x="600" y="25" text-anchor="middle" font-size="14" font-weight="700" fill="#2a7d2a">链接后（可执行文件）</text>
+
+  <rect x="380" y="40" width="305" height="295" rx="6" fill="#e8f5e9" stroke="#4caf50" stroke-width="2"/>
+  <text x="532" y="65" text-anchor="middle" font-size="12" font-weight="600" fill="#2a7d2a">myapp（合并后的 .text）</text>
+
+  <rect x="395" y="78" width="275" height="50" rx="3" fill="#fff3e0" stroke="#a5d6a7" stroke-width="1"/>
+  <text x="532" y="94" text-anchor="middle" font-size="10" font-family="monospace">0x401000: mov edi, 80</text>
+  <text x="532" y="110" text-anchor="middle" font-size="10" font-family="monospace">0x401005: call <tspan fill="#2a7d2a" font-weight="600">0x401200</tspan>  ← 真实地址!</text>
+  <text x="532" y="124" text-anchor="middle" font-size="9" fill="#888">(main.o .text 的起始地址 = 0x401000)</text>
+
+  <rect x="395" y="142" width="275" height="55" rx="3" fill="#fff3e0" stroke="#a5d6a7" stroke-width="1"/>
+  <text x="532" y="158" text-anchor="middle" font-size="10" font-family="monospace">&lt;voice_engine.o 的 .text 合并到这里&gt;</text>
+  <text x="532" y="174" text-anchor="middle" font-size="10" font-family="monospace" fill="#2a7d2a" font-weight="600">0x401200: &lt;say_hello&gt;: push rbp ...</text>
+  <text x="532" y="190" text-anchor="middle" font-size="10" font-family="monospace">0x40121a: &lt;set_volume&gt;: mov [rip+...], edi</text>
+
+  <!-- The relocation formula -->
+  <rect x="395" y="215" width="275" height="60" rx="4" fill="#fff8e1" stroke="#ffc107" stroke-width="1"/>
+  <text x="532" y="234" text-anchor="middle" font-size="10" font-weight="600" fill="#f57c00">重定位公式:</text>
+  <text x="532" y="252" text-anchor="middle" font-size="10" font-family="monospace" fill="#555">最终地址 = 被引用符号的地址 + 附加数</text>
+  <text x="532" y="270" text-anchor="middle" font-size="10" font-family="monospace" fill="#555">= 0x401200 + (-4) = 0x4011FC</text>
+
+  <!-- Arrow for the relocation -->
+  <line x1="120" y1="120" x2="400" y2="120" stroke="#c44" stroke-width="1" stroke-dasharray="4,2" opacity="0.5"/>
+  <line x1="400" y1="120" x2="400" y2="172" stroke="#c44" stroke-width="1" stroke-dasharray="4,2" opacity="0.5"/>
+  <line x1="400" y1="172" x2="532" y2="172" stroke="#2a7d2a" stroke-width="1" marker-end="url(#ar5)" opacity="0.5"/>
+
+  <rect x="395" y="285" width="275" height="38" rx="4" fill="#e3f2fd" stroke="#90caf9" stroke-width="1"/>
+  <text x="532" y="302" text-anchor="middle" font-size="10" fill="#1565c0">链接器还合并了 .data、.rodata、.bss</text>
+  <text x="532" y="318" text-anchor="middle" font-size="10" fill="#1565c0">并创建了 Program Header Table 供加载器使用</text>
+
+</svg>
+<div class="caption">图 4：重定位——链接器把占位符 0x00000000 替换成 say_hello 的真实运行时地址 0x401200。</div>
+</div>
+
+<div class="callout warn">
+  <strong>这就是 C++ Name Mangling 导致链接失败的根本原因！</strong> 链接器是根据<strong>字符串名</strong>来匹配符号的。如果 main.o 中引用的是 <code>_Z9say_hellov</code>（C++ mangled name），而 voice_engine.o 中因为用了 <code>extern "C"</code> 导出的是 <code>say_hello</code>——名字对不上，链接器就只能报 <code>undefined reference</code>。<strong>链接器不关心类型签名，只关心字符串是否完全相等。</strong>
+</div>
+
+<hr>
+
+<h2>四、静态库（.a）：一组 .o 的打包</h2>
+
+<p>静态库 <code>.a</code> 文件本质上是一个 <code>.o</code> 文件的归档（ar archive）——就像 .zip 一样把多个 .o 打包在一起，链接器从中按需提取。</p>
+
+<div class="fig">
+<svg viewBox="0 0 700 240" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <filter id="sh4"><feDropShadow dx="1" dy="1" stdDeviation="1.5" flood-opacity="0.1"/></filter>
+  </defs>
+
+  <!-- .a as archive -->
+  <rect x="20" y="30" width="200" height="190" rx="6" fill="#fff3e0" stroke="#ff9800" stroke-width="2" filter="url(#sh4)"/>
+  <text x="120" y="56" text-anchor="middle" font-size="13" font-weight="700" fill="#e65100">libvoice.a</text>
+  <text x="120" y="74" text-anchor="middle" font-size="10" fill="#888">ar archive（归档文件）</text>
+
+  <rect x="38" y="90" width="164" height="35" rx="4" fill="#fff" stroke="#ffcc80" stroke-width="1"/>
+  <text x="120" y="106" text-anchor="middle" font-size="10" fill="#555">voice_engine.o</text>
+  <text x="120" y="120" text-anchor="middle" font-size="9" fill="#888">{say_hello, set_volume, g_volume}</text>
+
+  <rect x="38" y="135" width="164" height="35" rx="4" fill="#fff" stroke="#ffcc80" stroke-width="1"/>
+  <text x="120" y="151" text-anchor="middle" font-size="10" fill="#555">audio_codec.o</text>
+  <text x="120" y="165" text-anchor="middle" font-size="9" fill="#888">{encode, decode}</text>
+
+  <rect x="38" y="180" width="164" height="28" rx="4" fill="#fff" stroke="#ffcc80" stroke-width="1"/>
+  <text x="120" y="198" text-anchor="middle" font-size="10" fill="#555">... 更多 .o</text>
+
+  <!-- Linker behavior -->
+  <text x="310" y="110" text-anchor="middle" font-size="20" fill="#888">→</text>
+
+  <!-- static linking result -->
+  <rect x="360" y="30" width="320" height="190" rx="6" fill="#e8f5e9" stroke="#4caf50" stroke-width="2" filter="url(#sh4)"/>
+  <text x="520" y="56" text-anchor="middle" font-size="13" font-weight="700" fill="#2a7d2a">myapp（静态链接结果）</text>
+
+  <rect x="380" y="72" width="280" height="22" rx="3" fill="#c8e6c9"/>
+  <text x="520" y="87" text-anchor="middle" font-size="10" fill="#333">main.o 的 .text（总是链接）</text>
+
+  <rect x="380" y="100" width="280" height="22" rx="3" fill="#ffcc80"/>
+  <text x="520" y="115" text-anchor="middle" font-size="10" fill="#333">voice_engine.o .text + .data（按需链接）</text>
+
+  <rect x="380" y="128" width="280" height="22" rx="3" fill="#e0e0e0"/>
+  <text x="520" y="143" text-anchor="middle" font-size="10" fill="#999">audio_codec.o 未被链接（没有引用它的符号）</text>
+
+  <rect x="380" y="160" width="280" height="40" rx="3" fill="#fff8e1" stroke="#ffc107" stroke-width="1"/>
+  <text x="520" y="175" text-anchor="middle" font-size="10" font-weight="600" fill="#f57c00">可执行文件 = main.o 代码 + 复制进来的 libvoice.a 代码</text>
+  <text x="520" y="193" text-anchor="middle" font-size="9" fill="#888">最终文件 > 3MB，运行时不再需要 libvoice.a</text>
+
+</svg>
+<div class="caption">图 5：静态链接——链接器从 .a 中提取被引用符号所在的 .o，把代码和数据复制到最终的可执行文件中。未被引用的 .o 不参与链接。</div>
+</div>
+
+<div class="callout">
+  <strong>静态链接的优缺点——和你的项目有什么关系？</strong>
+  <ul style="margin-top:0.3em;">
+    <li>✅ 可执行文件自包含，不依赖外部 .so，部署简单</li>
+    <li>❌ 可执行文件很大（每个使用 lib 的程序都有一份副本）</li>
+    <li>❌ 库更新后必须重新链接——不能运行时替换</li>
+    <li>❌ 不能使用 dlopen 做插件架构（代码已经"焊死"在可执行文件中）</li>
+  </ul>
+  你的语音项目用 dlopen 而不是静态链接，正是因为需要<strong>热替换</strong>引擎实现——升级语音引擎不需要重新编译整个应用。
+</div>
+
+<hr>
+
+<h2>五、动态链接：PLT/GOT 的完整工作流程</h2>
+
+<p>动态库（.so）的代码不复制进可执行文件。可执行文件只记录"我需要 libvoice.so 中的 say_hello"。真正的地址解析发生<strong>在运行时</strong>。</p>
+
+<p>PLT (Procedure Linkage Table) 和 GOT (Global Offset Table) 是实现这一切的机制。<strong>这是整个链接体系中最精妙的设计。</strong></p>
+
+<h3>5.1 静态图景：PLT/GOT 的数据结构</h3>
+
+<div class="fig">
+<svg viewBox="0 0 700 420" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+  <defs>
+    <filter id="sh5"><feDropShadow dx="1" dy="1" stdDeviation="1.5" flood-opacity="0.1"/></filter>
+    <marker id="ar6" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <!-- Left: caller code -->
+  <rect x="15" y="15" width="200" height="180" rx="6" fill="#fff3e0" stroke="#ff9800" stroke-width="1.5" filter="url(#sh5)"/>
+  <text x="115" y="40" text-anchor="middle" font-size="12" font-weight="700" fill="#e65100">你的代码 (myapp)</text>
+  <rect x="30" y="52" width="170" height="28" rx="3" fill="#fff" stroke="#ffcc80" stroke-width="1"/>
+  <text x="115" y="70" text-anchor="middle" font-size="10" font-family="monospace">call say_hello@PLT</text>
+  <text x="115" y="108" text-anchor="middle" font-size="10" fill="#888">↑ 编译器生成的是</text>
+  <text x="115" y="126" text-anchor="middle" font-size="10" fill="#888">call PLT[3]</text>
+  <text x="115" y="144" text-anchor="middle" font-size="10" fill="#888">不是 call say_hello!</text>
+  <text x="115" y="168" text-anchor="middle" font-size="9" fill="#c44">这是因为编译器不知道</text>
+  <text x="115" y="184" text-anchor="middle" font-size="9" fill="#c44">say_hello 会在哪个地址</text>
+
+  <!-- Arrow to PLT -->
+  <line x1="215" y1="105" x2="250" y2="105" stroke="#555" stroke-width="1.5" marker-end="url(#ar6)"/>
+
+  <!-- PLT -->
+  <rect x="255" y="15" width="190" height="180" rx="6" fill="#fce4ec" stroke="#e53935" stroke-width="1.5" filter="url(#sh5)"/>
+  <text x="350" y="40" text-anchor="middle" font-size="12" font-weight="700" fill="#c62828">PLT（代码，只读）</text>
+  <rect x="270" y="52" width="160" height="22" rx="3" fill="#ffcdd2"/>
+  <text x="350" y="67" text-anchor="middle" font-size="9" font-family="monospace">PLT[0]: 调用动态链接器</text>
+  <rect x="270" y="80" width="160" height="22" rx="3" fill="#ffcdd2"/>
+  <text x="350" y="95" text-anchor="middle" font-size="9" font-family="monospace">PLT[1]: jmp *GOT[3]</text>
+  <text x="350" y="113" text-anchor="middle" font-size="9" font-family="monospace">     push reloc_index</text>
+  <text x="350" y="129" text-anchor="middle" font-size="9" font-family="monospace">     jmp PLT[0]</text>
+  <rect x="270" y="138" width="160" height="22" rx="3" fill="#fff" stroke="#ef9a9a" stroke-width="1"/>
+  <text x="350" y="153" text-anchor="middle" font-size="9" font-family="monospace">... 更多 PLT 条目 ...</text>
+
+  <!-- Arrow to GOT -->
+  <line x1="445" y1="105" x2="480" y2="105" stroke="#555" stroke-width="1.5" marker-end="url(#ar6)"/>
+
+  <!-- GOT -->
+  <rect x="485" y="15" width="200" height="180" rx="6" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5" filter="url(#sh5)"/>
+  <text x="585" y="40" text-anchor="middle" font-size="12" font-weight="700" fill="#2a7d2a">GOT（数据，可读写）</text>
+  <rect x="500" y="52" width="170" height="22" rx="3" fill="#c8e6c9"/>
+  <text x="585" y="67" text-anchor="middle" font-size="9" font-family="monospace">GOT[0]: .dynamic 地址</text>
+  <rect x="500" y="80" width="170" height="22" rx="3" fill="#c8e6c9"/>
+  <text x="585" y="95" text-anchor="middle" font-size="9" font-family="monospace">GOT[1]: link_map 指针</text>
+  <rect x="500" y="108" width="170" height="22" rx="3" fill="#c8e6c9"/>
+  <text x="585" y="123" text-anchor="middle" font-size="9" font-family="monospace">GOT[2]: _dl_runtime_resolve</text>
+  <rect x="500" y="136" width="170" height="22" rx="3" fill="#fff8e1" stroke="#ffc107" stroke-width="1.5"/>
+  <text x="585" y="151" text-anchor="middle" font-size="9" font-family="monospace">GOT[3]: say_hello 地址</text>
+  <text x="585" y="168" text-anchor="middle" font-size="8" fill="#f57c00">初始值 → PLT[1]+6</text>
+
+  <!-- Bottom: .so -->
+  <text x="350" y="225" text-anchor="middle" font-size="12" font-weight="600" fill="#555">↓ GOT[3] 修复后指向这里 ↓</text>
+
+  <rect x="220" y="240" width="260" height="40" rx="6" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" filter="url(#sh5)"/>
+  <text x="350" y="258" text-anchor="middle" font-size="12" font-weight="700" fill="#1565c0">libvoice.so 中的 say_hello()</text>
+  <text x="350" y="274" text-anchor="middle" font-size="10" fill="#555">实际执行 push rbp; mov rbp, rsp; ...</text>
+
+  <!-- Big annotation -->
+  <rect x="20" y="310" width="660" height="55" rx="6" fill="#fff8e1" stroke="#ffc107" stroke-width="1.5"/>
+  <text x="350" y="333" text-anchor="middle" font-size="11" font-weight="600" fill="#f57c00">核心设计: 代码（PLT）只读 + 数据（GOT）可写 = 代码段可以共享，只有 GOT 页需要 CoW</text>
+  <text x="350" y="353" text-anchor="middle" font-size="10" fill="#888">所有进程共享同一份 libvoice.so 的 .text 页（物理内存只有一份），各自的 GOT 独立</text>
+</svg>
+<div class="caption">图 6：PLT/GOT 的静态结构。PLT 是代码（跳板指令），GOT 是数据（地址表）。调用不直接跳到 say_hello，而是经过 PLT → GOT → 真实函数这个间接路径。</div>
+</div>
+
+<h3>5.2 动态图景：首次调用时发生了什么</h3>
+
+<p>这是整个动态链接中最值得理解的 5 步过程——建议对照着图一步步在脑子里模拟：</p>
+
+<div class="fig">
+<svg viewBox="0 0 700 490" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+
+  <!-- State 1: Before first call -->
+  <text x="20" y="24" font-size="13" font-weight="700" fill="#c44">状态 A：首次调用 say_hello() 之前</text>
+
+  <!-- Code box -->
+  <rect x="20" y="36" width="660" height="38" rx="4" fill="#fafafa" stroke="#ddd" stroke-width="1"/>
+  <text x="350" y="52" text-anchor="middle" font-size="10" font-family="monospace">myapp:   call <tspan fill="#c44">PLT[1]</tspan></text>
+  <text x="350" y="68" text-anchor="middle" font-size="10" font-family="monospace">PLT[1]: jmp *GOT[3]    ← GOT[3] 当前指向 PLT[1]+6（下一条指令）</text>
+
+  <!-- GOT state -->
+  <rect x="400" y="80" width="280" height="22" rx="3" fill="#fff8e1" stroke="#ffc107" stroke-width="1"/>
+  <text x="540" y="95" text-anchor="middle" font-size="10" font-family="monospace">GOT[3] = &amp;PLT[1] + 6（指向"push + jmp"）</text>
+
+  <!-- Arrow down -->
+  <text x="350" y="120" text-anchor="middle" font-size="18" fill="#888">⬇ 用户代码调用 say_hello() ⬇</text>
+
+  <!-- State 2: Step 1 -->
+  <text x="20" y="148" font-size="13" font-weight="700" fill="#c44">状态 B：执行流程</text>
+
+  <!-- Step 1 -->
+  <rect x="20" y="160" width="320" height="52" rx="4" fill="#fafafa" stroke="#1976d2" stroke-width="1.5"/>
+  <circle cx="42" cy="178" r="11" fill="#1976d2"/>
+  <text x="42" y="183" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">1</text>
+  <text x="62" y="178" font-size="11" font-weight="600" fill="#1565c0">call PLT[1]</text>
+  <text x="62" y="196" font-size="10" fill="#555">CPU 跳到 PLT[1] 的代码位置</text>
+
+  <line x1="340" y1="186" x2="360" y2="186" stroke="#555" stroke-width="1" marker-end="url(#ar6)"/>
+
+  <!-- Step 2 -->
+  <rect x="365" y="160" width="315" height="52" rx="4" fill="#fafafa" stroke="#1976d2" stroke-width="1.5"/>
+  <circle cx="387" cy="178" r="11" fill="#1976d2"/>
+  <text x="387" y="183" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">2</text>
+  <text x="407" y="178" font-size="11" font-weight="600" fill="#1565c0">PLT[1] 执行 jmp *GOT[3]</text>
+  <text x="407" y="196" font-size="10" fill="#555">间接跳转到 GOT[3] 存的地址 → 回到 PLT[1]+6</text>
+
+  <line x1="522" y1="212" x2="522" y2="230" stroke="#555" stroke-width="1" marker-end="url(#ar6)"/>
+
+  <!-- Step 3 -->
+  <rect x="200" y="235" width="300" height="52" rx="4" fill="#fafafa" stroke="#1976d2" stroke-width="1.5"/>
+  <circle cx="222" cy="253" r="11" fill="#1976d2"/>
+  <text x="222" y="258" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">3</text>
+  <text x="242" y="253" font-size="11" font-weight="600" fill="#1565c0">PLT[1]+6: push reloc_index; jmp PLT[0]</text>
+  <text x="242" y="271" font-size="10" fill="#555">把重定位索引压栈 → 跳到 PLT[0]（动态链接器入口）</text>
+
+  <line x1="350" y1="287" x2="350" y2="305" stroke="#555" stroke-width="1" marker-end="url(#ar6)"/>
+
+  <!-- Step 4 -->
+  <rect x="200" y="310" width="300" height="52" rx="4" fill="#fff3e0" stroke="#ff9800" stroke-width="1.5"/>
+  <circle cx="222" cy="328" r="11" fill="#ff9800"/>
+  <text x="222" y="333" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">4</text>
+  <text x="242" y="328" font-size="11" font-weight="600" fill="#e65100">PLT[0] → _dl_runtime_resolve()</text>
+  <text x="242" y="346" font-size="10" fill="#555">动态链接器查符号表: "say_hello" → libvoice.so 中的地址</text>
+
+  <line x1="350" y1="362" x2="350" y2="380" stroke="#e65100" stroke-width="1.5" marker-end="url(#ar6)"/>
+
+  <!-- Step 5: the payoff -->
+  <rect x="200" y="385" width="300" height="52" rx="4" fill="#e8f5e9" stroke="#4caf50" stroke-width="2"/>
+  <circle cx="222" cy="403" r="11" fill="#2a7d2a"/>
+  <text x="222" y="408" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">5</text>
+  <text x="242" y="403" font-size="11" font-weight="600" fill="#2a7d2a"><tspan fill="#2a7d2a">改写 GOT[3] = say_hello 真实地址</tspan> 然后 call say_hello</text>
+  <text x="242" y="421" font-size="10" fill="#555">函数执行完毕返回 → 用户代码继续</text>
+
+  <!-- State 3: Subsequent calls -->
+  <text x="20" y="460" font-size="13" font-weight="700" fill="#2a7d2a">状态 C：第二次及之后调用 say_hello()</text>
+
+  <rect x="20" y="472" width="660" height="38" rx="4" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="350" y="488" text-anchor="middle" font-size="10" font-family="monospace">myapp:   call PLT[1]</text>
+  <text x="350" y="504" text-anchor="middle" font-size="10" font-family="monospace">PLT[1]: jmp *GOT[3]    ← GOT[3] 现在指向 libvoice.so 中的 say_hello!  <tspan fill="#2a7d2a" font-weight="600">直接到达，零额外解析开销</tspan></text>
+
+</svg>
+<div class="caption">图 7：RTLD_LAZY 延迟绑定的完整流程。首次调用触发解析（5 步），后续调用只需 1 次间接跳转——这就是"懒惰绑定"的名称由来。</div>
+</div>
+
+<div class="callout tip">
+  <strong>现在你应该理解为什么 Lesson 0003 推荐 RTLD_NOW 了：</strong>
+  延迟绑定意味着每个符号的第一次调用都要走这 5 步。在语音实时处理的场景中，你肯定不希望用户说第一句话时触发一大串 _dl_runtime_resolve 调用。<code>RTLD_NOW</code> 在 dlopen 时就一口气把所有 GOT 条目修好——启动稍微慢一点，但运行时完全没有额外开销。
+</div>
+
+<hr>
+
+<h2>六、一张图总结：静态链接 vs 动态链接</h2>
+
+<div class="fig">
+<svg viewBox="0 0 700 310" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+
+  <!-- Static -->
+  <rect x="15" y="10" width="330" height="290" rx="8" fill="#fff3e0" stroke="#ff9800" stroke-width="2"/>
+  <text x="180" y="38" text-anchor="middle" font-size="14" font-weight="700" fill="#e65100">静态链接</text>
+
+  <rect x="30" y="55" width="120" height="22" rx="3" fill="#ffcc80"/>
+  <text x="90" y="70" text-anchor="middle" font-size="10" fill="#333">main.o</text>
+  <text x="170" y="70" font-size="14" fill="#888">+</text>
+  <rect x="185" y="55" width="120" height="22" rx="3" fill="#ffcc80"/>
+  <text x="245" y="70" text-anchor="middle" font-size="10" fill="#333">libvoice.a</text>
+
+  <line x1="180" y1="85" x2="180" y2="105" stroke="#888" stroke-width="1.5" marker-end="url(#ar6)"/>
+
+  <rect x="70" y="110" width="220" height="65" rx="4" fill="#fff8e1" stroke="#ffc107" stroke-width="1.5"/>
+  <text x="180" y="130" text-anchor="middle" font-size="11" font-weight="600" fill="#f57c00">链接时:</text>
+  <text x="180" y="148" text-anchor="middle" font-size="10" fill="#555">① 符号解析（跨 .o 匹配）</text>
+  <text x="180" y="164" text-anchor="middle" font-size="10" fill="#555">② 重定位（填真实地址）</text>
+
+  <text x="180" y="195" text-anchor="middle" font-size="18" fill="#888">↓</text>
+
+  <rect x="70" y="205" width="220" height="40" rx="4" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="180" y="221" text-anchor="middle" font-size="11" font-weight="600" fill="#2a7d2a">myapp（≈ 3MB 完整可执行文件）</text>
+  <text x="180" y="237" text-anchor="middle" font-size="9" fill="#888">代码已全部内嵌，不需要 .so</text>
+
+  <text x="180" y="270" text-anchor="middle" font-size="10" fill="#888">libvoice 更新 → 必须重新链接</text>
+
+  <!-- Dynamic -->
+  <rect x="355" y="10" width="330" height="290" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="520" y="38" text-anchor="middle" font-size="14" font-weight="700" fill="#1565c0">动态链接</text>
+
+  <rect x="370" y="55" width="120" height="22" rx="3" fill="#90caf9"/>
+  <text x="430" y="70" text-anchor="middle" font-size="10" fill="#333">main.o</text>
+  <text x="510" y="70" font-size="14" fill="#888">+</text>
+  <rect x="525" y="55" width="120" height="22" rx="3" fill="#90caf9"/>
+  <text x="585" y="70" text-anchor="middle" font-size="10" fill="#333">libvoice.so</text>
+
+  <line x1="520" y1="85" x2="520" y2="105" stroke="#888" stroke-width="1.5" marker-end="url(#ar6)"/>
+
+  <rect x="410" y="110" width="220" height="50" rx="4" fill="#bbdefb" stroke="#64b5f6" stroke-width="1.5"/>
+  <text x="520" y="130" text-anchor="middle" font-size="11" font-weight="600" fill="#1565c0">链接时:</text>
+  <text x="520" y="148" text-anchor="middle" font-size="10" fill="#555">① 只记录：需要 libvoice.so + say_hello</text>
+
+  <text x="520" y="175" text-anchor="middle" font-size="10" fill="#555" font-weight="600">运行时（加载器 + PLT/GOT）：</text>
+  <text x="520" y="193" text-anchor="middle" font-size="10" fill="#555">② mmap libvoice.so</text>
+  <text x="520" y="209" text-anchor="middle" font-size="10" fill="#555">③ PLT/GOT 延迟解析或全量重定位</text>
+
+  <text x="520" y="235" text-anchor="middle" font-size="18" fill="#888">↓</text>
+
+  <rect x="410" y="245" width="220" height="40" rx="4" fill="#e8f5e9" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="520" y="261" text-anchor="middle" font-size="11" font-weight="600" fill="#2a7d2a">myapp（≈ 50KB） + libvoice.so</text>
+  <text x="520" y="277" text-anchor="middle" font-size="9" fill="#888">可执行文件很小，运行时加载 .so</text>
+
+</svg>
+<div class="caption">图 8：静态链接 vs 动态链接。核心区别：静态链接在<strong>编译时</strong>完成所有符号解析和重定位；动态链接把重定位推迟到<strong>运行时</strong>，通过 PLT/GOT 间接调用。</div>
+</div>
+
+<hr>
+
+<h2>七、自己动手：追踪动态库的符号和重定位</h2>
+
+<p>这些命令是你排查链接问题的基本工具箱。建议在终端里跟着敲一遍：</p>
+
+<div class="cli">
+<span class="prompt">$ </span><span class="cmd">nm voice_engine.o</span>                    <span class="hl"># 查看 .o 的符号表</span>
+0000000000000000 T set_volume
+000000000000001a T say_hello
+0000000000000000 D g_volume
+                 U printf
+
+<span class="prompt">$ </span><span class="cmd">nm -D /usr/lib/libc.so.6</span>              <span class="hl"># 查看 .so 的动态符号表</span>
+00000000000534a0 T printf
+00000000000a2b10 W puts
+...
+
+<span class="prompt">$ </span><span class="cmd">objdump -d -j .text voice_engine.o</span>     <span class="hl"># 反汇编 .text 段</span>
+000000000000001a &lt;say_hello&gt;:
+  1a: 55                   push   %rbp
+  ...
+  32: e8 00 00 00 00       call   <tspan fill="#c44">00 00 00 00</tspan>  ← 占位符!
+
+<span class="prompt">$ </span><span class="cmd">objdump -R myapp</span>                       <span class="hl"># 查看可执行文件需要的动态重定位</span>
+DYNAMIC RELOCATION RECORDS
+OFFSET           TYPE              VALUE
+000000403fe8     R_X86_64_GLOB_DAT __libc_start_main
+000000403ff0     R_X86_64_JUMP_SLOT printf
+
+<span class="prompt">$ </span><span class="cmd">ldd myapp</span>                              <span class="hl"># 查看可执行文件依赖哪些 .so</span>
+linux-vdso.so.1 (0x00007ffd...)
+libc.so.6 => /usr/lib/libc.so.6 (0x00007f...)
+/lib64/ld-linux-x86-64.so.2 (0x00007f...)
+</div>
+
+<div class="callout">
+  <strong>调试题：</strong> 如果你在运行程序时看到 <code>undefined symbol: _Z9say_hellov</code>，用 <code>nm -D your.so | grep say_hello</code> 检查 .so 中的实际符号名。大概率你会发现它叫 <code>say_hello</code>（C 链接），而你的代码在找 <code>_Z9say_hellov</code>（C++ mangled name）——这正好是 Lesson 0001 中 extern "C" 要解决的问题。
+</div>
+
+<hr>
+
+<h2>自测</h2>
+
+<div class="quiz" id="q1-container">
+  <p class="q">问题 1：目标文件（.o）中的重定位表（.rela.text）记录了以下哪项信息？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. 每个段的大小和文件偏移</div>
+    <div class="opt" data-id="b">B. 哪些代码位置需要在链接时填入符号的最终地址，以及对应哪个符号</div>
+    <div class="opt" data-id="c">C. 目标文件依赖哪些 .so</div>
+    <div class="opt" data-id="d">D. 函数的源代码行号映射</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q1-container', 'b')">提交</button>
+</div>
+
+<div class="quiz" id="q2-container">
+  <p class="q">问题 2：关于 PLT/GOT 机制，以下哪个描述是<strong>错误</strong>的？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. PLT 是只读代码段，GOT 是可读写数据段</div>
+    <div class="opt" data-id="b">B. GOT 条目的初始值指向 PLT 中的下一条指令</div>
+    <div class="opt" data-id="c">C. 每次调用外部函数时，都会重新运行 _dl_runtime_resolve</div>
+    <div class="opt" data-id="d">D. PLT 的间接跳转使得代码段可以跨进程共享</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q2-container', 'c')">提交</button>
+</div>
+
+<div class="quiz" id="q3-container">
+  <p class="q">问题 3：对于静态库 .a 和动态库 .so，哪个说法是正确的？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. .a 包含预编译的二进制代码，.so 包含源代码</div>
+    <div class="opt" data-id="b">B. 使用 .a 时，库代码被复制进可执行文件；使用 .so 时，可执行文件只记录依赖关系</div>
+    <div class="opt" data-id="c">C. .a 文件可以像 .so 一样用 dlopen 加载</div>
+    <div class="opt" data-id="d">D. .so 的加载完全由内核完成，不需要用户态参与</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q3-container', 'b')">提交</button>
+</div>
+
+<script>
+function check(containerId, correctId) {
+  const container = document.getElementById(containerId);
+  const opts = container.querySelectorAll('.opt');
+  const fb = container.querySelector('.feedback');
+  const btn = container.querySelector('button');
+
+  let selected = null;
+  opts.forEach(o => {
+    if (o.classList.contains('chosen')) selected = o.dataset.id;
+  });
+
+  if (!selected) { fb.textContent = '请先选择一个选项。'; fb.className = 'feedback'; return; }
+
+  opts.forEach(o => {
+    o.style.pointerEvents = 'none';
+    if (o.dataset.id === correctId) o.classList.add('correct');
+    else if (o.dataset.id === selected) o.classList.add('wrong');
+  });
+
+  if (selected === correctId) {
+    fb.textContent = '✓ 正确！';
+    fb.className = 'feedback correct-fb';
+  } else {
+    fb.textContent = '✗ 不对，再想想。正确答案已标绿。';
+    fb.className = 'feedback wrong-fb';
+  }
+  btn.disabled = true;
+}
+
+document.querySelectorAll('.quiz .opt').forEach(opt => {
+  opt.addEventListener('click', function() {
+    const container = this.closest('.quiz');
+    container.querySelectorAll('.opt').forEach(o => o.classList.remove('chosen','selected'));
+    this.classList.add('chosen','selected');
+  });
+});
+</script>
+
+<hr>
+
+<h2>进一步阅读</h2>
+
+<ul>
+  <li><strong>补基础：</strong> Ian Lance Taylor 的 <a href="https://lwn.net/Articles/276782/" target="_blank">20-part linker essay</a>（LWN）——gold 链接器作者亲笔，从入门到精通</li>
+  <li><strong>ELF 规范：</strong> <a href="https://refspecs.linuxfoundation.org/elf/elf.pdf" target="_blank">System V ABI: ELF Specification</a>——§1-2（文件格式）、§4（动态链接）</li>
+  <li><strong>实战：</strong> <a href="https://man7.org/linux/man-pages/man1/ld.1.html" target="_blank">man ld</a>——链接器参数速查</li>
+  <li><strong>动手实验：</strong> 用 <code>gcc -c a.c -o a.o && readelf -S a.o && readelf -s a.o && readelf -r a.o</code> 看看你自己写的代码在 .o 里长什么样</li>
+  <li>本工作区的 <a href="../reference/glossary.html">术语表</a></li>
+</ul>
+
+<div class="meta">
+  <p>
+    <strong>上一课：</strong> <a href="./0005-cmake-dlsym-dlopen-setup.html">CMake dlsym/dlopen 工程配置实战</a><br>
+    <strong>下一课：</strong> 待定——想深入哪个方向？编译器内部（A 到 Z 的编译流程）？GDB 调试动态库？还是 Windows DLL 机制对比？<br>
+    <strong>有任何不理解的地方？</strong> 直接在当前对话里问——我就是你的老师。链接器的任何细节都能展开讲。
+  </p>
+  <p style="margin-top:0.5em;">创建于 2026-08-01 · 课程 0006</p>
+</div>
+
+</body>
+</html>

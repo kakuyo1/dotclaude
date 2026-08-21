@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 0001：为什么 C++ 接口外面要套一层 C 桥接？</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<h1>0001 · 为什么 C++ 接口外面要套一层 C 桥接？</h1>
+<p style="color:var(--muted); font-size:1rem;">dlsym / dlopen / extern "C" 的工程动机</p>
+
+<hr>
+
+<h2>一、一个思想实验</h2>
+
+<p>
+假设你写了一个语音识别引擎，核心类是 <code>VoiceEngine</code>。
+你把它编译成 <code>libvoice.so</code>，让 Qt 前端直接链接。
+</p>
+
+<p>一切正常——直到某天发生以下任何一件事：</p>
+
+<ol>
+  <li>你用 GCC 9 编译 .so，但 Qt 前端用 GCC 11 编译</li>
+  <li>你在 CI 上换了一个 Linux 发行版</li>
+  <li>你给 <code>VoiceEngine</code> 加了一个 <code>private</code> 成员变量，重新编译 .so，但没有重新编译 Qt 前端</li>
+  <li>你把 <code>-D_GLIBCXX_USE_CXX11_ABI=0</code> 传给了其中一个模块</li>
+</ol>
+
+<div class="callout warn">
+  <strong>结果：</strong> 链接失败（undefined symbol），或者更糟——链接成功，运行时随机崩溃。
+</div>
+
+<p>
+这背后只有一个根本原因：<strong>C++ 没有稳定的二进制接口（ABI）</strong>。
+</p>
+
+<hr>
+
+<h2>二、核心知识点：C++ ABI 为什么不稳定</h2>
+
+<p>我们管编译器输出的二进制层面的"调用约定"叫 <strong>ABI</strong>（Application Binary Interface）。它包括三样东西：</p>
+
+<table class="compare">
+  <tr><th>组件</th><th>含义</th><th>C++ 的问题</th></tr>
+  <tr>
+    <td><strong>符号名</strong></td>
+    <td>函数/变量在 .so 里的字符串标识</td>
+    <td>C++ Name Mangling：<code>VoiceEngine::start()</code> 可能变成 <code>_ZN12VoiceEngine5startEv</code>——而这个名字随编译器、版本、平台变化<span class="sup">1</span></td>
+  </tr>
+  <tr>
+    <td><strong>对象布局</strong></td>
+    <td>成员变量在内存中的偏移量、vtable 结构</td>
+    <td>加一个 private 成员就改变偏移；不同编译器 vtable 布局不同<span class="sup">2</span></td>
+  </tr>
+  <tr>
+    <td><strong>调用约定</strong></td>
+    <td>参数如何传（寄存器 vs 栈）、谁清理栈、异常如何传播</td>
+    <td>C++ 异常不能安全穿越 .so 边界；STL 容器在不同编译器间二进制不兼容<span class="sup">3</span></td>
+  </tr>
+</table>
+
+<div class="callout tip">
+  <strong>关键直觉：</strong> C++ 编译器的输出是<em>同一份源代码的不同"方言"翻译</em>——两个编译器对同一行 C++ 代码产生的二进制可以完全不同。而 C 的 ABI 在所有主流平台上都是<strong>事实标准</strong>——它是操作系统本身定义的。
+</div>
+
+<h3>Name Mangling 一窥</h3>
+
+<p>同一个 C++ 函数签名，不同编译器产生的符号名：</p>
+
+<div class="diagram">// void VoiceEngine::start(const char* model, int flags)
+
+GCC (Itanium ABI):    _ZN12VoiceEngine5startEPKci
+MSVC:                 ?start@VoiceEngine@@QAEXPBDH@Z
+// 而 C 的 extern "C":  start
+//                       ↑ 所有编译器一致</div>
+
+<hr>
+
+<h2>三、解决方案：C 桥接层</h2>
+
+<p>你同事做的事，就是把 C++ 接口<strong>翻译成 C</strong>，然后用 <code>dlopen</code>/<code>dlsym</code> 运行时加载。下面分层拆解：</p>
+
+<h3>第 1 层：extern "C"——关闭 Name Mangling</h3>
+
+<pre><code>// voice_c_api.h  —— 对外暴露的头文件（纯 C）
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// 不透明指针：前端不知道 VoiceEngine 内部长什么样
+typedef struct VoiceEngineHandle VoiceEngineHandle;
+
+VoiceEngineHandle* voice_engine_create(const char* config_path);
+void               voice_engine_destroy(VoiceEngineHandle* h);
+int                voice_engine_start(VoiceEngineHandle* h,
+                                      const char* model, int flags);
+const char*        voice_engine_get_result(VoiceEngineHandle* h);
+
+#ifdef __cplusplus
+}
+#endif</code></pre>
+
+<div class="callout">
+  <code>extern "C"</code> 告诉 C++ 编译器：这些函数用 C 的链接方式。符号名就是函数名本身，所有编译器一致。不透明指针 <code>VoiceEngineHandle*</code> 替代了 C++ 对象——前端永远不直接看到 C++ 类型。
+</div>
+
+<h3>第 2 层：dlsym/dlopen——运行时加载</h3>
+
+<pre><code>// 在 Qt/C++ 前端中，运行时加载语音模块
+#include &lt;dlfcn.h&gt;
+
+// 1. 打开 .so（不要求编译时链接）
+void* handle = dlopen("libvoice.so", RTLD_NOW);
+if (!handle) {
+    fprintf(stderr, "%s\n", dlerror());
+    return;
+}
+
+// 2. 查找函数指针
+typedef VoiceEngineHandle* (*create_fn)(const char*);
+typedef void               (*destroy_fn)(VoiceEngineHandle*);
+typedef int                (*start_fn)(VoiceEngineHandle*, const char*, int);
+
+create_fn  create  = (create_fn)  dlsym(handle, "voice_engine_create");
+destroy_fn destroy = (destroy_fn) dlsym(handle, "voice_engine_destroy");
+start_fn   start   = (start_fn)   dlsym(handle, "voice_engine_start");
+
+// 3. 使用——和普通函数调用一模一样
+VoiceEngineHandle* engine = create("/etc/voice/config.json");
+start(engine, "zh-CN-model.bin", 0);
+// ...
+destroy(engine);
+dlclose(handle);</code></pre>
+
+<h3>第 3 层：C++ 侧的实现（胶水代码）</h3>
+
+<pre><code>// voice_c_api.cpp —— 桥接层实现
+#include "voice_c_api.h"
+#include "VoiceEngine.hpp"   // 你原来的 C++ 类
+
+extern "C" {
+
+struct VoiceEngineHandle {
+    VoiceEngine* impl;  // 包裹你的 C++ 对象
+};
+
+VoiceEngineHandle* voice_engine_create(const char* config_path) {
+    auto* h = new VoiceEngineHandle;
+    h->impl = new VoiceEngine(std::string(config_path));
+    return h;
+}
+
+void voice_engine_destroy(VoiceEngineHandle* h) {
+    delete h->impl;
+    delete h;
+}
+
+int voice_engine_start(VoiceEngineHandle* h,
+                       const char* model, int flags) {
+    return h->impl->start(model, flags) ? 0 : -1;
+}
+
+const char* voice_engine_get_result(VoiceEngineHandle* h) {
+    return h->impl->getResult().c_str();  // 注意生命周期!
+}
+
+}</code></pre>
+
+<hr>
+
+<h2>四、多得到了什么？（附赠的好处）</h2>
+
+<table class="compare">
+  <tr><th>好处</th><th>为什么</th></tr>
+  <tr>
+    <td><strong>热替换</strong></td>
+    <td>替换 <code>libvoice.so</code> 文件，前端无需重新编译、甚至无需重启（自己实现 reload 逻辑）</td>
+  </tr>
+  <tr>
+    <td><strong>编译防火墙</strong></td>
+    <td>前端只 include 纯 C 头文件，不依赖任何 C++ 语音引擎的头文件。语音模块内部重构不会触发前端重编译</td>
+  </tr>
+  <tr>
+    <td><strong>可选依赖</strong></td>
+    <td>如果 <code>libvoice.so</code> 不存在，前端可以优雅降级——"语音功能未安装"——而不是启动就 crash</td>
+  </tr>
+  <tr>
+    <td><strong>多后端</strong></td>
+    <td>只要遵守同一个 C API 契约，可以换讯飞/百度/自研引擎——前端一行代码不改</td>
+  </tr>
+  <tr>
+    <td><strong>跨编译器兼容</strong></td>
+    <td>.so 用 Clang 编译，Qt 前端用 GCC 编译——只要通过 C ABI 通信，完全没问题</td>
+  </tr>
+</table>
+
+<hr>
+
+<h2>五、一张图总结</h2>
+
+<div class="diagram">┌─────────────────────────────────────────────┐
+│                 Qt/C++ 前端                   │
+│  #include "voice_c_api.h"   ← 只看到 C 头文件  │
+│  dlopen("libvoice.so")      ← 运行时加载       │
+│  dlsym → 函数指针            ← 动态查找符号     │
+└──────────────────┬──────────────────────────┘
+                   │  C ABI（稳定、跨编译器）
+                   │  函数名 = 符号名
+                   │  不透明指针 = 无布局依赖
+┌──────────────────▼──────────────────────────┐
+│           C 桥接层 (voice_c_api.cpp)          │
+│  extern "C" { … }          ← 关掉 name mangling│
+│  VoiceEngineHandle → impl  ← 包裹 C++ 对象     │
+└──────────────────┬──────────────────────────┘
+                   │  C++ 调用（同一个编译单元内）
+                   │  ABI 一致，安全
+┌──────────────────▼──────────────────────────┐
+│       你的 C++ 语音引擎 (VoiceEngine.hpp)      │
+│  class VoiceEngine { … }  ← 纯 C++，不变      │
+└─────────────────────────────────────────────┘</div>
+
+<hr>
+
+<h2>六、自测</h2>
+
+<div class="quiz" id="q1-container">
+  <p class="q">问题 1：下面的符号名中，哪个是 <code>extern "C"</code> 产生的？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. <code>_ZN12VoiceEngine5startEPKci</code></div>
+    <div class="opt" data-id="b">B. <code>?start@VoiceEngine@@QAEXPBDH@Z</code></div>
+    <div class="opt" data-id="c">C. <code>start</code></div>
+    <div class="opt" data-id="d">D. <code>_voice_engine_start@16</code></div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q1-container', 'c')">提交</button>
+</div>
+
+<div class="quiz" id="q2-container">
+  <p class="q">问题 2：不透明指针（opaque pointer）<code>VoiceEngineHandle*</code> 的核心作用是什么？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. 提高内存分配效率</div>
+    <div class="opt" data-id="b">B. 隐藏 C++ 对象的内存布局，前端不依赖具体类型</div>
+    <div class="opt" data-id="c">C. 避免使用智能指针</div>
+    <div class="opt" data-id="d">D. 让编译器做更激进的优化</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q2-container', 'b')">提交</button>
+</div>
+
+<div class="quiz" id="q3-container">
+  <p class="q">问题 3：如果不用 dlsym/dlopen，只是把头文件改成 <code>extern "C"</code> 然后编译时链接，哪个好处会<strong>丢失</strong>？</p>
+  <div class="opts">
+    <div class="opt" data-id="a">A. 跨编译器兼容性</div>
+    <div class="opt" data-id="b">B. 热替换和可选依赖</div>
+    <div class="opt" data-id="c">C. 符号名稳定性</div>
+    <div class="opt" data-id="d">D. 隐藏实现细节</div>
+  </div>
+  <p class="feedback"></p>
+  <button onclick="check('q3-container', 'b')">提交</button>
+</div>
+
+<script>
+function check(containerId, correctId) {
+  const container = document.getElementById(containerId);
+  const opts = container.querySelectorAll('.opt');
+  const fb = container.querySelector('.feedback');
+  const btn = container.querySelector('button');
+
+  let selected = null;
+  opts.forEach(o => {
+    o.classList.remove('selected','correct','wrong');
+    if (o.classList.contains('chosen')) selected = o.dataset.id;
+  });
+
+  if (!selected) { fb.textContent = '请先选择一个选项。'; fb.className = 'feedback'; return; }
+
+  opts.forEach(o => {
+    o.style.pointerEvents = 'none';
+    if (o.dataset.id === correctId) o.classList.add('correct');
+    else if (o.dataset.id === selected) o.classList.add('wrong');
+  });
+
+  if (selected === correctId) {
+    fb.textContent = '✓ 正确！';
+    fb.className = 'feedback correct-fb';
+  } else {
+    fb.textContent = '✗ 不对，再想想。正确答案已标绿。';
+    fb.className = 'feedback wrong-fb';
+  }
+  btn.disabled = true;
+}
+
+document.querySelectorAll('.quiz .opt').forEach(opt => {
+  opt.addEventListener('click', function() {
+    const container = this.closest('.quiz');
+    container.querySelectorAll('.opt').forEach(o => o.classList.remove('chosen','selected'));
+    this.classList.add('chosen','selected');
+  });
+});
+</script>
+
+<hr>
+
+<h2>七、进一步阅读</h2>
+
+<ul>
+  <li>
+    <strong>主要参考：</strong>
+    <a href="https://itanium-cxx-abi.github.io/cxx-abi/abi.html" target="_blank">Itanium C++ ABI Specification</a>
+    —— GCC/Clang 在 Linux 上采用的 C++ ABI 标准。读 §1（Introduction）和 §5（Name Mangling）就足够建立直觉。
+  </li>
+  <li>
+    <a href="https://www.akkadia.org/drepper/dsohowto.pdf" target="_blank">How To Write Shared Libraries — Ulrich Drepper</a>
+    —— glibc 维护者写的共享库权威指南。§2（ABI）和 §4（Versioning）是必读。
+  </li>
+  <li>
+    本工作区的 <a href="../reference/glossary.html">术语表</a>（下次课补齐更多术语）
+  </li>
+</ul>
+
+<div class="meta">
+  <p>
+    <strong>下一课预告：</strong> 不透明指针的内存管理陷阱——<code>c_str()</code> 生命周期、跨 .so 边界的 new/delete 匹配问题。<br>
+    <strong>有问题？</strong> 在 Claude Code 里直接问我就行——我是你的助教，随时解答任何不理解的地方。
+  </p>
+  <p style="margin-top:0.5em;">创建于 2026-08-01 · 课程 0001</p>
+</div>
+
+</body>
+</html>
