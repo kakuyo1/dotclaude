@@ -65,11 +65,16 @@
     ],
     "PostToolUse": [
       {"matcher": "Agent", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/verify-explore-results.sh", "timeout": 5}]},
-      {"matcher": "WebSearch", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/websearch-followup-hint.sh", "timeout": 5}]}
+      {"matcher": "WebSearch", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/websearch-followup-hint.sh", "timeout": 5}]},
+      {"matcher": "SendUserFile", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/track-sent-file.sh", "timeout": 10}]}
     ],
     "UserPromptSubmit": [
       {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-git-status.sh", "timeout": 5}]},
-      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-time.sh", "timeout": 5}]}
+      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-time.sh", "timeout": 5}]},
+      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-system-load.sh", "timeout": 5}]}
+    ],
+    "PostCompact": [
+      {"matcher": "manual|auto", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/compact-bump.sh", "timeout": 5}]}
     ]
   }
 }
