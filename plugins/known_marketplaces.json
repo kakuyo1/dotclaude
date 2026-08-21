@@ -1,0 +1,42 @@
+{
+  "claude-plugins-official": {
+    "source": {
+      "source": "github",
+      "repo": "anthropics/claude-plugins-official"
+    },
+    "installLocation": "C:\\Users\\admin\\.claude\\plugins\\marketplaces\\claude-plugins-official",
+    "lastUpdated": "2026-07-02T08:33:12.113Z"
+  },
+  "cc-frontend-skills": {
+    "source": {
+      "source": "github",
+      "repo": "oikon48/cc-frontend-skills"
+    },
+    "installLocation": "C:\\Users\\admin\\.claude\\plugins\\marketplaces\\cc-frontend-skills",
+    "lastUpdated": "2026-07-24T01:17:23.433Z"
+  },
+  "ponytail": {
+    "source": {
+      "source": "github",
+      "repo": "DietrichGebert/ponytail"
+    },
+    "installLocation": "C:\\Users\\admin\\.claude\\plugins\\marketplaces\\ponytail",
+    "lastUpdated": "2026-07-24T01:17:53.507Z"
+  },
+  "impeccable": {
+    "source": {
+      "source": "github",
+      "repo": "pbakaus/impeccable"
+    },
+    "installLocation": "C:\\Users\\admin\\.claude\\plugins\\marketplaces\\impeccable",
+    "lastUpdated": "2026-07-28T08:05:14.809Z"
+  },
+  "diagram-design": {
+    "source": {
+      "source": "github",
+      "repo": "cathrynlavery/diagram-design"
+    },
+    "installLocation": "C:\\Users\\admin\\.claude\\plugins\\marketplaces\\cathrynlavery-diagram-design",
+    "lastUpdated": "2026-08-21T16:20:00.000Z"
+  }
+}
