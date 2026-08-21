@@ -22,7 +22,8 @@
     "superpowers@claude-plugins-official": false,
     "ponytail@ponytail": true,
     "context7@claude-plugins-official": false,
-    "impeccable@impeccable": false
+    "impeccable@impeccable": false,
+    "diagram-design@diagram-design": true
   },
   "extraKnownMarketplaces": {
     "cc-frontend-skills": {
@@ -46,5 +47,26 @@
   },
   "effortLevel": "xhigh",
   "theme": "dark-ansi",
-  "autoCompactEnabled": true
+  "autoCompactEnabled": true,
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-destructive-git.sh", "timeout": 5}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-git-amend.sh", "timeout": 5}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-dangerous-ops.sh", "timeout": 5}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-cat-write.sh", "timeout": 5}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-heredoc.sh", "timeout": 5}]},
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-devnull-redirect.sh", "timeout": 5}]},
+      {"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/no-multi-question.sh", "timeout": 5}]},
+      {"matcher": "WebFetch", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/hint-skill-read-url.sh", "timeout": 5}]},
+      {"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/hint-agent-claude-code-guide.sh", "timeout": 5}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Agent", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/verify-explore-results.sh", "timeout": 5}]},
+      {"matcher": "WebSearch", "hooks": [{"type": "command", "command": "bash ~/.claude/hooks/websearch-followup-hint.sh", "timeout": 5}]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-git-status.sh", "timeout": 5}]},
+      {"hooks": [{"type": "command", "command": "bash ~/.claude/hooks/inject-time.sh", "timeout": 5}]}
+    ]
+  }
 }
