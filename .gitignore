@@ -22,11 +22,14 @@ worktrees/
 scheduled_tasks.lock
 scheduled_tasks.json
 
+config.json
+
 daemon/
 daemon.lock
 daemon.log
 daemon.status.json
 
+.claude/*
 .mcp.json
 .last-cleanup
 .last-update-result.json
@@ -43,5 +46,12 @@ settings.json.txt
 
 skills/daily
 skills/scrapling/.venv/
+skills/teach/learning-records/
+skills/teach/lessons/
+skills/teach/assets/
+skills/teach/assets/reference/
+skills/teach/MISSION.md
+skills/teach/NOTES.md
+skills/teach/RESOURCES.md
 
 CLAUDE.local.md
