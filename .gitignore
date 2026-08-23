@@ -9,6 +9,7 @@ daemon/
 debug/
 downloads/
 jobs/
+tmp/
 shell-snapshots/
 projects/
 tasks/

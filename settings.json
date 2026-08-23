@@ -215,7 +215,8 @@
     "ponytail@ponytail": true,
     "context7@claude-plugins-official": false,
     "impeccable@impeccable": false,
-    "diagram-design@diagram-design": false
+    "diagram-design@diagram-design": false,
+    "last30days@last30days-skill": true
   },
   "extraKnownMarketplaces": {
     "cc-frontend-skills": {
