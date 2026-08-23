@@ -9,13 +9,13 @@ or tests.
 Ask whether correct behavior can be fully stated as an executable oracle before
 implementation:
 
-|                  | Definite module                                              | Tacit boundary module                                        |
-| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| Correctness      | Deterministic assertions can describe it                     | Judgment, interaction, or a real environment is part of the evidence |
-| Typical work     | Algorithms, math, pure transformations, fully modeled business rules | GUI reactions, external I/O, environment-dependent workflows |
-| Shape            | Values in, values out; no hidden environment                 | Thin adapter between external effects and domain values      |
-| Verification     | Automated unit tests lock specified behavior and edges       | An agent drives and observes a standalone development harness |
-| Standalone entry | Optional when tests cover the contract                       | Required; use an executable or a host application's development flag |
+| | Definite module | Tacit boundary module |
+|---|---|---|
+| Correctness | Deterministic assertions can describe it | Judgment, interaction, or a real environment is part of the evidence |
+| Typical work | Algorithms, math, pure transformations, fully modeled business rules | GUI reactions, external I/O, environment-dependent workflows |
+| Shape | Values in, values out; no hidden environment | Thin adapter between external effects and domain values |
+| Verification | Automated unit tests lock specified behavior and edges | An agent drives and observes a standalone development harness |
+| Standalone entry | Optional when tests cover the contract | Required; use an executable or a host application's development flag |
 
 A business rule remains definite when its I/O contract has a faithful, trivial
 fake. If a fake would reproduce only guesses about the real environment, the

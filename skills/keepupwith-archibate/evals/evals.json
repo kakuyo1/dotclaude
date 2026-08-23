@@ -1,0 +1,23 @@
+{
+  "skill_name": "keepupwith-archibate",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "看看 archibate 最近 3 天更新了什么，我哪些落后了？",
+      "expected_output": "结构化中文报告：覆盖 agent-skills 和 dotfiles-claude 两个仓库；列出窗口内提交；按技能/配置分组列出变更文件（含本地状态：落后/已同步/未采纳）；末尾给带编号的建议同步清单。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "keepup 7 天，只看 agent-skills",
+      "expected_output": "只报告 agent-skills（不出现 dotfiles-claude），窗口为 7 天；其余结构与 eval 1 相同。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "把 scrapling 技能同步到最新（注意：这是测试，把目标目录改为沙箱 C:\\Users\\wdmzs\\AppData\\Local\\Temp\\keepup-sandbox，不要动真实 .claude）",
+      "expected_output": "将 upstream agent-skills 的 skills/scrapling 下窗口内变更文件同步到沙箱对应路径，逐文件报告写入结果；沙箱文件内容与上游 HEAD 逐字节一致。",
+      "files": []
+    }
+  ]
+}
