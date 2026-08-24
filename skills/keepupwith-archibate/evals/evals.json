@@ -15,7 +15,7 @@
     },
     {
       "id": 3,
-      "prompt": "把 scrapling 技能同步到最新（注意：这是测试，把目标目录改为沙箱 C:\\Users\\wdmzs\\AppData\\Local\\Temp\\keepup-sandbox，不要动真实 .claude）",
+      "prompt": "把 scrapling 技能同步到最新（注意：这是测试，把目标目录改为沙箱 $HOME\\AppData\\Local\\Temp\\keepup-sandbox，不要动真实 .claude）",
       "expected_output": "将 upstream agent-skills 的 skills/scrapling 下窗口内变更文件同步到沙箱对应路径，逐文件报告写入结果；沙箱文件内容与上游 HEAD 逐字节一致。",
       "files": []
     }

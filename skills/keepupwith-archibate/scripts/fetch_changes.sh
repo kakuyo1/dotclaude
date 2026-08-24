@@ -4,6 +4,9 @@
 # output: JSON {repo, branch, window_days, commits[], diff{files[]}}；无提交时打印 NO_COMMITS
 set -euo pipefail
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/lib.sh"   # 定位 gh + 代理分流 + 登录校验（失败 exit 2/3）
+
 REPO="${1:?repo required: agent-skills|dotfiles-claude}"
 DAYS="${2:-3}"
 

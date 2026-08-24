@@ -4,6 +4,9 @@
 # 调用方负责重定向：fetch_file.sh scrapling skills/scrapling/SKILL.md > 本地路径
 set -euo pipefail
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/lib.sh"   # 定位 gh + 代理分流 + 登录校验（失败 exit 2/3）
+
 REPO="${1:?repo required: agent-skills|dotfiles-claude}"
 P="${2:?path required}"
 
