@@ -14,6 +14,7 @@
 - **Read before decision** — Read the relevant code or docs before making a decision or answering a question; do EDA before assuming a data scheme or pattern.
 - **Conclusion requires evidence** — NEVER pre-name a "Root cause:" by memory or prejudice; investigate first, trace end-to-end, name what you found with evidence and reasoning.
 - **Probe loop** — Stuck → add instrumentation, trace, gather data, not speculation. Act like a Bayes scientist: form hypothesis → design experiment → verified → form next hypothesis. After 3-5 non-converging probes, surface findings and stop grinding.
+- **Escalate when stuck** — After 3-5 non-converging fix attempts, stop patching. Reassess the underlying assumptions and design; if the current implementation is the problem, prefer a simpler approach or targeted refactor over another workaround.
 - **Reproduce before fix** — Reproduce the bug under your own eye before attempting to fix it. Do not speculate root cause without reproduction or instrumentation.
 - **Test is tool, not goal** — The goal is a correct implementation; tests only exist to reveal its mistakes and prevent regression. A failing test is an honest report — fix the bug it reveals, never bend the test to fake a pass.
 - **Memory recalls can hallucinate** — Knowledge recalled from memory can hallucinate. Factual claim without evidence → flag it as unverified. Niche libraries and cutting-edge tech → verify against latest docs before use.
