@@ -14,7 +14,14 @@ description: >
 
 # VPN / 代理排障
 
-先跑 `scripts/probe_proxy.sh` 一步定位，再按需看各节。
+## 先分诊：有代理才排障，没有就直接说
+
+动手前先确认**本机有没有可用的代理/VPN**——问一句用户，或 `netstat` 扫一眼常见端口（§1）：
+
+- **没有代理/VPN** + 目标是被墙的境外站点（GitHub / Wikipedia / Google / 外网下载）→ **直接明确告诉用户：这是 GFW 封锁，本机没有代理，绕不过去**。跳过下面的端口探测——没有端口可探，纯浪费时间。
+  - 这不是工具或代码的错，是网络被墙。
+  - 可行的做法：间歇性重试（被墙时通时断，配快速失败超时，别让命令挂死）；换可达的 GitHub 镜像（如 `ghfast.top`）；把需要联网的活放到有 VPN 的机器上做。
+- **有代理** → 跑 `scripts/probe_proxy.sh` 定位端口，再按需看各节。
 
 ## 0. 症状 → 判断
 
@@ -117,7 +124,7 @@ page.wait_for_load_state("networkidle")         # 等 Google Fonts 等资源加�
 page.locator("svg").first.screenshot(path=out, omit_background=True)
 ```
 
-## 6. 诊断顺序（默认流程）
+## 6. 诊断顺序（有代理时的默认流程）
 
 1. 直连失败 → 2. `probe_proxy.sh` 确认代理在不在、哪个端口 → 3. 带上代理重试 → 4. 还不行检查**该工具自己的代理参数**（curl_cffi/requests 各自不同，别假设 env 生效）→ 5. 仍失败换直链或重试一次（瞬时故障不少见）→ 6. 用户说「开了 VPN」但探测不到端口时，让用户确认 VPN 客户端是「系统代理」还是「TUN」模式。
 
