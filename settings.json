@@ -18,6 +18,7 @@
   },
   "model": "deepseek-v4-flash[1m]",
   "skillOverrides": {
+    "archify": "user-invocable-only",
     "claude-api": "user-invocable-only",
     "deslop": "user-invocable-only",
     "fewer-permission-prompts": "user-invocable-only",
