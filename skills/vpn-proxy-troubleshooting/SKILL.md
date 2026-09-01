@@ -11,28 +11,37 @@ description: >
   vars, scrapling's Fetcher.get swallows the proxy kwarg, and Playwright/Chrome inherits the Windows
   system proxy automatically.
 ---
-
 # VPN / 代理排障
 
 ## 先分诊：有代理才排障，没有就直接说
 
 动手前先确认**本机有没有可用的代理/VPN**——问一句用户，或 `netstat` 扫一眼常见端口（§1）：
 
-- **没有代理/VPN** + 目标是被墙的境外站点（GitHub / Wikipedia / Google / 外网下载）→ **直接明确告诉用户：这是 GFW 封锁，本机没有代理，绕不过去**。跳过下面的端口探测——没有端口可探，纯浪费时间。
+- **没有代理/VPN** + 目标是 GitHub → **先尝试 ghfast.top 镜像拉取**：
+  ```bash
+  # git clone 镜像示例
+  git clone https://ghfast.top/https://github.com/user/repo.git
+
+  # curl 下载示例
+  curl -L -o file.zip https://ghfast.top/https://github.com/user/repo/releases/download/v1.0/file.zip
+  ```
+
+  - 如果镜像也不通 → **直接明确告诉用户：这是 GFW 封锁，本机没有代理，绕不过去**。跳过下面的端口探测——没有端口可探，纯浪费时间。
   - 这不是工具或代码的错，是网络被墙。
-  - 可行的做法：间歇性重试（被墙时通时断，配快速失败超时，别让命令挂死）；换可达的 GitHub 镜像（如 `ghfast.top`）；把需要联网的活放到有 VPN 的机器上做。
+  - 其他可行做法：间歇性重试（被墙时通时断，配快速失败超时，别让命令挂死）；把需要联网的活放到有 VPN 的机器上做。
+- **没有代理/VPN** + 目标是其他被墙站点（Wikipedia / Google / 外网下载）→ **直接明确告诉用户：这是 GFW 封锁，本机没有代理，绕不过去**。跳过下面的端口探测。
 - **有代理** → 跑 `scripts/probe_proxy.sh` 定位端口，再按需看各节。
 
 ## 0. 症状 → 判断
 
-| 症状 | 含义 |
-|---|---|
-| curl exit 35（SSL connect error） | 目标被墙 / 连接被重置，代理没生效 |
-| curl exit 28（timeout） | 同上（超时版） |
-| exit 7（Could not connect to server ... after 0 ms） | 代理端口没开，或该目标走代理被秒拒 |
-| 403 / 4xx | 网络通，但被目标反爬（换 impersonate / UA / 直链） |
+| 症状                                                                       | 含义                                                  |
+| -------------------------------------------------------------------------- | ----------------------------------------------------- |
+| curl exit 35（SSL connect error）                                          | 目标被墙 / 连接被重置，代理没生效                     |
+| curl exit 28（timeout）                                                    | 同上（超时版）                                        |
+| exit 7（Could not connect to server ... after 0 ms）                       | 代理端口没开，或该目标走代理被秒拒                    |
+| 403 / 4xx                                                                  | 网络通，但被目标反爬（换 impersonate / UA / 直链）    |
 | `git push` 报 `Please make sure you have the correct access rights...` | 常是 SSH 连接被断，不是密钥问题——先测 SSH，别查密钥 |
-| `ssh -T git@github.com` 报 `Connection closed by ... port 22/443` | GFW 重置 SSH 握手，见 §3 |
+| `ssh -T git@github.com` 报 `Connection closed by ... port 22/443`      | GFW 重置 SSH 握手，见 §3                             |
 
 **第一反应永远是先探测代理，不要直接怀疑代码。**
 
