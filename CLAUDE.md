@@ -2,7 +2,7 @@
 
 ## Harness Pitfalls
 
-- **Skills are mandatory** — Load ALL matching skills via the `Skill` tool before starting ANY task, even if the topic seems familiar. Skills define guardrails and workflows — not just reference docs. Never skip because "I already know it." This machine has 30+ skills; known triggers: network failure → `vpn-proxy-troubleshooting`, Chinese typography → `zhlint`, GitHub → `gh`, charts → `dataviz`, UI design → `impeccable`, minimal code → `ponytail`.
+- **Skills are mandatory** — Load ALL matching skills via the `Skill` tool before starting ANY task, even if the topic seems familiar. Skills define guardrails and workflows — not just reference docs. Never skip because "I already know it." This machine has 50+ skills; known triggers: network failure → `vpn-proxy-troubleshooting`, Chinese typography → `zhlint`, GitHub → `gh`, charts → `dataviz`, UI design → `design-taste-frontend`, minimal code → `ponytail`.
 - **Parallel tool calls** — Batch ONLY independent calls; keep width ≤4. Never batch calls with data dependencies: every call's arguments freeze before any result returns, so a call needing a prior call's output can't see it. One failure cancels the whole batch → cascade.
 - **Bash output is internal** — Goes to the agent, never the user. Don't truncate (`| head`, `| tail`, `2>/dev/null`); the harness already saves large output and previews the head.
 - **Prefer Edit/Write over sed/cat** — Edit and Write are diff-tracked by the harness (user can view or revert an edit); Bash file mutations are irreversible. Only use Bash alternatives when Edit legitimately won't work: `ssh [remote]`, `sudo tee`, `jq` on complex json.
