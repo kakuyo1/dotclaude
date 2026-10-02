@@ -1,4 +1,4 @@
-﻿# Decoupled Modules and Verification Surfaces
+# Decoupled Modules and Verification Surfaces
 
 Design module boundaries around what can be verified in isolation. Separate
 definite computation from tacit interaction before choosing classes, targets,

@@ -1,4 +1,4 @@
-﻿# Debug Harnesses, REPLs, and Developer Surfaces
+# Debug Harnesses, REPLs, and Developer Surfaces
 
 Replace repeated source-edit observation loops with a controllable execution
 surface. Start with the smallest useful harness; promote its controls into a

@@ -1,4 +1,4 @@
-﻿# Log-Based Debug Instrumentation
+# Log-Based Debug Instrumentation
 
 Use debug instrumentation to turn a tacit symptom into discriminating evidence.
 Keep the production control flow intact and prefer one comprehensive observation
