@@ -32,9 +32,7 @@ daemon.status.json
 .last-cleanup
 .last-update-result.json
 .ponytail-active
-.caveman-active
-.caveman-history.jsonl
-.caveman-statusline-suffix
+.i-have-adhd-always
 
 mcp-needs-auth-cache.json
 stats-cache.json

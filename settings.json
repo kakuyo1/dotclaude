@@ -13,7 +13,6 @@
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
-    "CAVEMAN_DEFAULT_MODE": "ultra",
     "BASH_DEFAULT_TIMEOUT_MS": "240000",
     "HTTP_PROXY": "http://127.0.0.1:7890",
     "HTTPS_PROXY": "http://127.0.0.1:7890",
@@ -46,18 +45,6 @@
     "qt-ui-design": "off"
   },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/caveman-activate.sh",
-            "timeout": 5,
-            "statusMessage": "Loading caveman mode..."
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
@@ -230,12 +217,13 @@
     "refreshInterval": 5
   },
   "enabledPlugins": {
-    "frontend-skills@cc-frontend-skills": true,
+    "frontend-skills@cc-frontend-skills": false,
     "ponytail@ponytail": true,
     "context7@claude-plugins-official": false,
     "impeccable@impeccable": false,
     "diagram-design@diagram-design": false,
-    "last30days@last30days-skill": true
+    "last30days@last30days-skill": false,
+    "i-have-adhd@i-have-adhd": true
   },
   "extraKnownMarketplaces": {
     "cc-frontend-skills": {
@@ -260,6 +248,12 @@
       "source": {
         "source": "github",
         "repo": "cathrynlavery/diagram-design"
+      }
+    },
+    "i-have-adhd": {
+      "source": {
+        "source": "github",
+        "repo": "ayghri/i-have-adhd"
       }
     }
   },
