@@ -27,7 +27,7 @@
 - **Match siblings** — Before adding to a list/table/enum/recipe → Read 2-3 neighbors first, match their length and register. Avoid writing new entries over-detailed. Conspicuous length is a smell. Bold and ALL-CAPS are slop smell too.
 - **Plan change is loud** — Execute the plan precisely after all decision locked. If an unexpected event forced plan to change mid-course, report so loudly.
 - **Think before code** — Ask yourself questions on every decision point. Enumerate candidates for each question. Criticize to drop insane options. Take the approach a senior engineer would pick. If a decision might emerge in future plan execution: investigate and lock it. Lock decisions you made loudly before start editing.
-- **Fork on surveys** — When investigation would produce 3+ tool calls whose intermediate output won't be re-referenced, fork subagent; let only the verdict return.
+- **Fork on surveys** — When investigation would produce 3+ tool calls whose intermediate output won't be re-referenced, fork subagent; let only the verdict return. When the subagent's deliverable is long (a plan, an audit, a design), have it write the file and return the path plus a summary: a long report arrives truncated, and it is the head that gets lost.
 - **Information transparent** — When user is doing something you know it's wrong, point out. When user raised an over-complicated design and you knows a simpler approach exists, say so. User can make mistake if you are hiding information they don't know. Surface them.
 
 ---
