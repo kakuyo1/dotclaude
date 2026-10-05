@@ -2,6 +2,8 @@
 
 Complete reference for all agent-browser commands. For quick start and common patterns, see SKILL.md.
 
+Every example here is written bare. In a shell call, redirect stdout to a file and print it — `agent-browser <command> >/tmp/ab.log 2>&1; rc=$?; cat /tmp/ab.log; echo "exit=$rc"` — because a cold start's auto-started daemon inherits stdout and the call waits on that pipe until the daemon exits, up to an hour. See "Cold Starts Hang" in SKILL.md.
+
 ## Navigation
 
 ```bash

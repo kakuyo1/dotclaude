@@ -12,6 +12,29 @@ allowed-tools:
 
 The CLI uses Chrome/Chromium via CDP directly. Install via `npm i -g agent-browser`, `brew install agent-browser`, or `cargo install agent-browser`. Run `agent-browser install` to download Chrome.
 
+## Cold Starts Hang — Redirect stdout
+
+The first command of a session auto-starts a background daemon. The daemon inherits that command's stdout and lives up to an hour, so a caller that reads stdout to the end — the Bash tool, `| cat`, `$(...)`, a captured `&&` chain — keeps waiting long after the command printed its answer and exited. Every cold start therefore looks like a permanent freeze. It recurs whenever no daemon is running: the first call of a session, and after `close`, `close --all`, a crash, or the idle timeout.
+
+Send stdout to a file on every invocation, then print the file:
+
+```bash
+agent-browser <command> >/tmp/ab.log 2>&1; rc=$?; cat /tmp/ab.log; echo "exit=$rc"
+```
+
+Chain inside the redirect, not after it:
+
+```bash
+{ agent-browser open https://example.com && agent-browser snapshot -i; } >/tmp/ab.log 2>&1; cat /tmp/ab.log
+```
+
+- Run templates the same way: `bash templates/form-automation.sh <url> >/tmp/ab.log 2>&1; cat /tmp/ab.log`.
+- Put long operations (video, an oversized snapshot) in the Bash tool's background mode and poll `/tmp/ab.log` while they run. A foreground call shows nothing until it returns, so progress is only visible this way.
+- If a call is already stuck: `agent-browser close --all >/tmp/ab.log 2>&1; cat /tmp/ab.log`, then retry. `agent-browser doctor --fix` clears stale daemon files.
+- `agent-browser mcp` is a stdio JSON-RPC server and bare `agent-browser chat` is a REPL. Both run until killed, so neither belongs in a shell call.
+
+Examples below omit the redirect for readability — add it to every one.
+
 ## Triggers
 
 ### When To Use
@@ -66,7 +89,7 @@ agent-browser fill @e1 "user@example.com" && agent-browser fill @e2 "password123
 agent-browser open https://example.com && agent-browser wait --load networkidle && agent-browser screenshot page.png
 ```
 
-**When to chain:** Use `&&` when you don't need to read the output of an intermediate command before proceeding (e.g., open + wait + screenshot). Run commands separately when you need to parse the output first (e.g., snapshot to discover refs, then interact using those refs).
+**When to chain:** Use `&&` when you don't need to read the output of an intermediate command before proceeding (e.g., open + wait + screenshot). Run commands separately when you need to parse the output first (e.g., snapshot to discover refs, then interact using those refs). Wrap the whole chain in the redirect braces from [Cold Starts Hang](#cold-starts-hang--redirect-stdout) — a daemon spawned mid-chain inherits the chain's stdout just the same.
 
 ## Handling Authentication
 
@@ -486,6 +509,8 @@ agent-browser wait 5000
 ```
 
 When dealing with consistently slow websites, use `wait --load networkidle` after `open` to ensure the page is fully loaded before taking a snapshot. If a specific element is slow to render, wait for it directly with `wait <selector>` or `wait @ref`.
+
+`wait --load networkidle` cannot settle on a page that never stops talking — polling, websockets, analytics beacons. It then burns the full default timeout (25s of silence) and still prints `✓ Done`, so the success marker does not mean the page settled. Prefer a concrete signal when the page is chatty: `wait <selector>`, `wait @e1`, `wait --url <pattern>`, or `wait --fn`.
 
 ## Session Management and Cleanup
 
