@@ -178,24 +178,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/inject-time.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/inject-system-load.sh",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "PostCompact": [
@@ -261,5 +243,10 @@
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-ansi",
-  "autoCompactEnabled": true
+  "autoCompactEnabled": true,
+  "modelSettings": {
+    "deepseek-flash": {
+      "effortLevel": "high"
+    }
+  }
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Custom Claude Code statusLine renderer.
 #
-# Reads stdin JSON (session_id, cwd, model.id, context_window, workspace),
-# renders a single line with model + ctx% + cwd + git + audit + idle + drift segments
-# scoped to the current session.
+# Reads stdin JSON (session_id, cwd, model.id, context_window, workspace,
+# cost.total_lines_added/removed, effort, thinking),
+# renders a single line with model + ctx% + balance + cwd + git + proxy + audit +
+# idle + drift + file + effort + clock segments scoped to the current session.
 #
 # Audit segment priority:
 #   1. <sid>.json.auditing-<pid>-<ts>  → "auditing… Ns" (cyan) while alive
@@ -16,13 +17,26 @@ set -o pipefail
 
 input=$(cat)
 
-j() { jq -r "$1" 2>/dev/null <<<"$input"; }
-
-session_id=$(j '.session_id // empty')
-cwd=$(j '.cwd // empty')
-project_dir=$(j '.workspace.project_dir // empty')
-model_id=$(j '.model.id // .model.display_name // empty')
-ctx_pct=$(j '.context_window.used_percentage // empty')
+# All stdin fields in one jq spawn: doing this as nine separate single-field
+# calls costs ~240ms per render, this costs ~27ms. Fields are joined with U+001F
+# rather than @tsv because TAB is IFS-whitespace and `read` collapses runs of
+# it, silently shifting every value left whenever a field is empty. The output
+# is routed through $( ) rather than a process substitution because jq here
+# terminates stdout with CRLF; fed straight into `read`, that puts a stray CR on
+# the last field (`true\r` != `true`). Command substitution strips it.
+stdin_fields=$(jq -r '[
+  .session_id // "",
+  .cwd // "",
+  .workspace.project_dir // "",
+  .model.id // .model.display_name // "",
+  .context_window.used_percentage // "",
+  .cost.total_lines_added // "",
+  .cost.total_lines_removed // "",
+  .effort.level // "",
+  .thinking.enabled // ""
+] | map(tostring) | join("\u001f")' <<<"$input")
+IFS=$'\x1f' read -r session_id cwd project_dir model_id ctx_pct \
+  lines_added lines_removed effort_level thinking_enabled <<<"$stdin_fields"
 
 RED=$'\033[31m'
 GREEN=$'\033[32m'
@@ -33,6 +47,7 @@ CYAN=$'\033[36m'
 GRAY=$'\033[90m'
 BOLD=$'\033[1m'
 RESET=$'\033[0m'
+sep='\'
 
 file_mtime_epoch() {
   stat -c '%Y' "$1" 2>/dev/null ||
@@ -63,12 +78,66 @@ if [[ "$ctx_pct" =~ ^[0-9]+$ ]] && (( ctx_pct > 0 )); then
   ctx_segment=" ${color}[${ctx_pct}%]${RESET}"
 fi
 
+# --- cost --------------------------------------------------------------------
+# Account balance from the DeepSeek balance API, plus this session's line churn.
+# Claude Code's own cost.total_cost_usd is deliberately NOT used: it prices this
+# model at a default Claude rate card and overstated the real bill by ~50x.
+# The fetch is cached for BALANCE_TTL seconds — ~200ms is cheap but there is no
+# reason to make the call on every 5s refresh. The token is only ever passed as
+# a curl header; it is never written to disk. If the fetch fails, the last
+# cached value is still shown.
+cost_segment=""
+cost_part=""
+cost_color=$GRAY
+balance_cache="/tmp/claude-${UID}-state/deepseek-balance"
+BALANCE_TTL=60
+if [[ -n "$ANTHROPIC_AUTH_TOKEN" ]]; then
+  bal_age=$(( BALANCE_TTL + 1 ))
+  if [[ -f "$balance_cache" ]]; then
+    bal_mtime=$(file_mtime_epoch "$balance_cache")
+    [[ -n "$bal_mtime" ]] && bal_age=$(( $(date +%s) - bal_mtime ))
+  fi
+  if (( bal_age >= BALANCE_TTL )); then
+    fresh_bal=$(curl -sS --max-time 5 \
+      -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+      https://api.deepseek.com/user/balance 2>/dev/null |
+      jq -r '.balance_infos[0].total_balance // empty' 2>/dev/null || true)
+    if [[ "$fresh_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      mkdir -p "$(dirname "$balance_cache")"
+      printf '%s' "$fresh_bal" > "$balance_cache.tmp.$$" &&
+        mv "$balance_cache.tmp.$$" "$balance_cache"
+    fi
+  fi
+  cached_bal=$(cat "$balance_cache" 2>/dev/null || true)
+  if [[ "$cached_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    cost_part="¥${cached_bal}"
+    if awk -v b="$cached_bal" 'BEGIN { exit !(b + 0 < 1) }'; then
+      cost_color=$RED
+    fi
+  fi
+fi
+lines_part=""
+if [[ "$lines_added" =~ ^[0-9]+$ && "$lines_removed" =~ ^[0-9]+$ ]] &&
+  (( lines_added > 0 || lines_removed > 0 )); then
+  lines_part="${GREEN}+${lines_added}${RESET}/${RED}-${lines_removed}${RESET}"
+fi
+if   [[ -n "$cost_part" && -n "$lines_part" ]]; then
+  cost_segment="${cost_color}${cost_part}${RESET}  ${lines_part}"
+elif [[ -n "$cost_part" ]]; then
+  cost_segment="${cost_color}${cost_part}${RESET}"
+elif [[ -n "$lines_part" ]]; then
+  cost_segment="${lines_part}"
+fi
+
 # --- cwd_short ---------------------------------------------------------------
 cwd_segment=""
 if [[ -n "$cwd" ]]; then
   if [[ -n "$project_dir" && "$cwd" == "$project_dir"* ]]; then
-    rel="${cwd#$project_dir}"
+    # Quoting is load-bearing: unquoted, a backslash in the pattern (Windows
+    # paths) is an escape character, the match degenerates, and nothing is stripped.
+    rel="${cwd#"$project_dir"}"
     rel="${rel#/}"
+    rel="${rel#"$sep"}"
     cwd_short="${rel:-$(basename "$project_dir")}"
   elif [[ "$cwd" == "$HOME" ]]; then
     cwd_short="~"
@@ -90,7 +159,36 @@ if [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --git-dir &>/dev/null; then
     else
       git_segment="  ${GREEN}${branch}${RESET}"
     fi
+    # Upstream tracking counts: "left\tright" = "<behind>\t<ahead>". No upstream
+    # (or detached) → command fails → keep branch-only rendering.
+    counts=$(git -C "$cwd" rev-list --left-right --count '@{u}...HEAD' 2>/dev/null || true)
+    ab=""
+    if [[ "$counts" =~ ^([0-9]+)[[:space:]]+([0-9]+)$ ]]; then
+      behind="${BASH_REMATCH[1]}"
+      ahead="${BASH_REMATCH[2]}"
+      (( ahead  > 0 )) && ab+="${GREEN}↑${ahead}${RESET}"
+      (( behind > 0 )) && ab+="${YELLOW}↓${behind}${RESET}"
+      [[ -n "$ab" ]] && ab=" ${ab}"
+    fi
+    git_segment+="$ab"
   fi
+fi
+
+# --- proxy -------------------------------------------------------------------
+# Clash is toggled by hand and foreign sites fail silently when it is off, so
+# this is the one segment that always renders: green "px" = port listening,
+# red "px✗" = down.
+proxy_segment=""
+port="${HTTP_PROXY##*:}"
+[[ "$port" =~ ^[0-9]+$ ]] || port=7890
+# The reader must consume all of netstat's output: `grep -q` exits at the first
+# match and SIGPIPEs netstat, which `set -o pipefail` would report as a failed
+# probe (false red px✗).
+hits=$(netstat -ano 2>/dev/null | grep -E "TCP[[:space:]]+127\.0\.0\.1:${port}[[:space:]]+0\.0\.0\.0:0[[:space:]]+LISTENING" || true)
+if [[ -n "$hits" ]]; then
+  proxy_segment="  ${GREEN}px${RESET}"
+else
+  proxy_segment="  ${RED}px✗${RESET}"
 fi
 
 # --- audit segment -----------------------------------------------------------
@@ -145,7 +243,22 @@ if [[ -n "$session_id" ]]; then
   fi
 fi
 
+# --- effort ------------------------------------------------------------------
+# Reasoning effort level in gray; "·think" suffix when extended thinking is on.
+effort_segment=""
+if [[ -n "$effort_level" ]]; then
+  effort_segment="  ${GRAY}${effort_level}${RESET}"
+  [[ "$thinking_enabled" == "true" ]] &&
+    effort_segment+="${GRAY}·think${RESET}"
+fi
+
+# --- clock -------------------------------------------------------------------
+# Always renders; replaces the per-turn prompt-injection clock hook.
+clock_segment="  ${GRAY}$(date '+%H:%M')${RESET}"
+
 # --- compose -----------------------------------------------------------------
 left="${model_segment}${ctx_segment}"
+[[ -n "$left" && -n "$cost_segment" ]] && left+="  "
+left+="$cost_segment"
 [[ -n "$left" && -n "$cwd_segment" ]] && left+="  "
-printf '%s%s%s%s%s%s%s\n' "$left" "$cwd_segment" "$git_segment" "$audit_segment" "$idle_segment" "$drift_segment" "$file_segment"
+printf '%s%s%s%s%s%s%s%s%s%s\n' "$left" "$cwd_segment" "$git_segment" "$proxy_segment" "$audit_segment" "$idle_segment" "$drift_segment" "$file_segment" "$effort_segment" "$clock_segment"
