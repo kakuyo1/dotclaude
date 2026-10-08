@@ -1,0 +1,7 @@
+{
+  "name": "traxnode",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://www.traxnode.com",
+    "NO_PROXY": "localhost,127.0.0.1,::1,traxnode.com"
+  }
+}

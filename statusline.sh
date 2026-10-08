@@ -103,6 +103,7 @@ symbol=""
 case "${ANTHROPIC_BASE_URL:-}" in
   *deepseek*)    provider=deepseek;    symbol='¥' ;;
   *agentrouter*) provider=agentrouter; symbol='$' ;;
+  *traxnode*)    provider=traxnode;    symbol='$' ;;
   *)             provider="" ;;
 esac
 
