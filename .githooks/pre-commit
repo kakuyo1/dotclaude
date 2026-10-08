@@ -63,9 +63,11 @@ if [ -z "$gl" ]; then
 fi
 [ -n "$gl" ] || die "gitleaks is not installed — commit blocked (fail-closed).
 Install, no admin required:
-  cd \"\$HOME/bin\" && curl -fLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip && unzip -o gitleaks_8.30.1_windows_x64.zip gitleaks.exe
-Or: winget install --id Gitleaks.Gitleaks --exact --accept-package-agreements --accept-source-agreements
-    (portable zip, no elevation; open a new shell afterwards)
+  winget install --id Gitleaks.Gitleaks --exact --accept-package-agreements --accept-source-agreements
+  (portable zip, no elevation; open a new shell afterwards)
+Or take the newest release binary into ~/bin:
+  https://github.com/gitleaks/gitleaks/releases/latest
+  -> gitleaks_<version>_windows_x64.zip, unpack gitleaks.exe next to jq.exe
 Emergency bypass: git commit --no-verify"
 
 out=$("$gl" git --staged --redact -v --no-banner --config .gitleaks.toml . 2>&1)

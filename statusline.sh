@@ -56,7 +56,9 @@ file_mtime_epoch() {
 }
 
 # --- model_short -------------------------------------------------------------
-# claude-opus-4-7[1m] -> opus-4.7-1m  ;  display_name passes through.
+# claude-<family>-<major>-<minor>[1m] -> <family>-<major>.<minor>-1m
+# Illustrative only; an id that is not claude-* passes through unchanged, and so
+# does display_name. Naming a real model here would rot the moment it retires.
 model_segment=""
 if [[ -n "$model_id" ]]; then
   if [[ "$model_id" == claude-* ]]; then

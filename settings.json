@@ -229,11 +229,6 @@
     }
   },
   "effortLevel": "xhigh",
-  "modelSettings": {
-    "deepseek-flash": {
-      "effortLevel": "high"
-    }
-  },
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-ansi",

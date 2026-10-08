@@ -2,13 +2,13 @@
   "name": "deepseek",
   "env": {
     "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-    "ANTHROPIC_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "deepseek-flash[1m]",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash[1m]",
     "NO_PROXY": "localhost,127.0.0.1,::1,api.deepseek.com,.deepseek.com"
+  },
+  "resolveModels": {
+    "from": "https://api.deepseek.com/models",
+    "idField": "id",
+    "contextWindowField": "context_window",
+    "assignment": "single",
+    "prefer": "^deepseek-flash$"
   }
 }

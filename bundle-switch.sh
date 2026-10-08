@@ -118,29 +118,45 @@ report() {
 }
 
 # ---------------------------------------------------------------------------
-# agentrouter: resolve model names from the relay, then verify each one.
+# Model resolution, driven entirely by the bundle's resolveModels block.
 #
-# The pricing endpoint lists a model as offered even while its budget pool is
-# exhausted, and this relay rations the claude models. An exhausted pool answers
-# HTTP 402 to every call and Claude Code retries it. Measured live: a session
-# whose ANTHROPIC_MODEL had been resolved to claude-opus-5 failed six times
-# before its first reply, while deepseek-v4-flash answered 200 straight away.
-# Listing is therefore not enough — every candidate gets a one-token probe and
-# only what actually answers is used.
+# No provider's model names are hardcoded. Both expose a list endpoint, and both
+# are known to list models that cannot actually serve a request, so a listed
+# model is not proof of a usable one. Measured live on agentrouter: a session
+# whose ANTHROPIC_MODEL had been resolved to claude-opus-5 failed six API calls
+# before its first reply, because that relay rations the claude models and
+# answers 402 "Budget pool quota has been exhausted" while /api/pricing still
+# lists them. Every candidate therefore gets a one-token probe and only what
+# answers 200 is used.
 #
-# The probe must carry a Claude Code User-Agent: the relay fingerprints clients
-# and answers 401 "unauthorized client detected" to anything that does not look
-# like one. Without it every probe would look broken.
+# resolveModels fields:
+#   from                  list endpoint. The token is always sent: required by
+#                         DeepSeek, which answers 401 without it, and ignored by
+#                         the public agentrouter endpoint.
+#   idField               "id" (DeepSeek) | "model_name" (agentrouter)
+#   ratioField            optional cost multiplier, used to order candidates
+#   contextWindowField    optional. A window of at least 1M earns the
+#                         client-side [1m] marker, so the marker is derived from
+#                         the provider's own data rather than asserted.
+#   requiresEndpointType  optional. Keep only models offering that wire format.
+#   assignment            "family" -> opus / sonnet / mini slots (agentrouter)
+#                         "single" -> one model in every slot (DeepSeek)
+#   prefer                optional regex. Matching models are probed first, and
+#                         if none match the ordering still yields a candidate,
+#                         so a rename degrades instead of breaking.
 #
 # Emits KEY=VALUE lines. A slot with no working candidate is omitted rather than
 # guessed. Returns 1 when the list cannot be obtained at all, 2 when nothing in
 # it works.
-# What the relay matches is the SHAPE claude-cli/<anything> (external, cli):
-# measured, versions 1.0.0 and 9.9.9 both pass, while dropping the
-# " (external, cli)" suffix or the "claude-cli/" prefix gives 401. The version
-# is read from the installed CLI anyway, so the header stays truthful across an
-# upgrade and cannot rot into a claim that is simply false — not because the
-# relay validates it.
+#
+# The probe must carry a Claude Code User-Agent: agentrouter fingerprints
+# clients and answers 401 "unauthorized client detected" to anything that does
+# not look like one, which would make every candidate look broken. What it
+# matches is the SHAPE claude-cli/<anything> (external, cli) — measured,
+# versions 1.0.0 and 9.9.9 both pass, while dropping the " (external, cli)"
+# suffix or the "claude-cli/" prefix gives 401. The version is read from the
+# installed CLI anyway so the header stays truthful across an upgrade, not
+# because the relay validates it.
 claude_cli_version() {
     local v
     # --version writes nothing: verified by comparing the mtimes of ~/.claude.json
@@ -172,9 +188,20 @@ model_works() {
 }
 
 resolve_models() {
-    local url="$1" want="$2" base="$3" tok="$4" prof="$5" json
+    local prof="$1" base="$2" tok="$3" json
+    local url idf ratiof cwf ep assign prefer
 
-    json=$(curl -sS --max-time 10 "$url" 2>/dev/null) || json=""
+    url=$(jqr '.resolveModels.from // empty' "$prof")
+    [ -n "$url" ] || return 1
+    idf=$(jqr '.resolveModels.idField // "model_name"' "$prof")
+    ratiof=$(jqr '.resolveModels.ratioField // ""' "$prof")
+    cwf=$(jqr '.resolveModels.contextWindowField // ""' "$prof")
+    ep=$(jqr '.resolveModels.requiresEndpointType // ""' "$prof")
+    assign=$(jqr '.resolveModels.assignment // "family"' "$prof")
+    prefer=$(jqr '.resolveModels.prefer // ""' "$prof")
+
+    json=$(curl -sS --max-time 12 -A "$PROBE_UA" \
+        -H "Authorization: Bearer $tok" "$url" 2>/dev/null) || json=""
     if [ -n "$json" ] && printf '%s' "$json" | jq -e '.data' >/dev/null 2>&1; then
         mkdir -p "$(dirname "$MODEL_CACHE")" 2>/dev/null
         printf '%s' "$json" > "$MODEL_CACHE.tmp.$$" 2>/dev/null &&
@@ -184,22 +211,37 @@ resolve_models() {
         [ -n "$json" ] || return 1
     fi
 
-    local all
-    all=$(printf '%s' "$json" | jqr --arg t "$want" \
-        '.data[]
-         | select((.supported_endpoint_types // []) | index($t))
-         | [.model_name, ((.model_ratio // 999) | tostring)] | @tsv' 2>/dev/null) || return 1
-    [ -n "$all" ] || return 1
+    # one row per candidate: id <TAB> ratio <TAB> context_window
+    local rows
+    rows=$(printf '%s' "$json" | jqr \
+        --arg id "$idf" --arg rf "$ratiof" --arg cw "$cwf" --arg ep "$ep" '
+        .data[]
+        | select($ep == "" or ((.supported_endpoint_types // []) | index($ep)))
+        | . as $m
+        | ($m[$id] // empty) as $name
+        | select($name != "")
+        | [$name, (($m[$rf] // 999) | tostring), (($m[$cw] // 0) | tostring)]
+        | @tsv' 2>/dev/null) || rows=""
+    [ -n "$rows" ] || return 1
 
-    # Preference order: claude models first (better quality), newest version
-    # first, then everything else cheapest first. Probing follows this order, so
-    # the first usable entry is also the preferred one.
+    # Probe order. "family" puts claude models first (better quality), newest
+    # version first, then everything else cheapest first. "single" is a plain
+    # cost order with an optional preferred name hoisted to the front.
     local order m usable=""
-    order=$(
-        printf '%s\n' "$all" | awk -F'\t' '$1 ~ /^claude-/ {print $1}' | sort -Vr
-        printf '%s\n' "$all" | awk -F'\t' '$1 !~ /^claude-/ {print $2"\t"$1}' \
-            | sort -k1,1n -k2,2 | cut -f2
-    )
+    if [ "$assign" = "single" ]; then
+        order=$(printf '%s\n' "$rows" | sort -t$'\t' -k2,2n -k1,1 | cut -f1)
+        if [ -n "$prefer" ]; then
+            order=$( { printf '%s\n' "$rows" | awk -F'\t' -v p="$prefer" '$1 ~ p {print $1}'
+                       printf '%s\n' "$order"; } | awk '!seen[$0]++')
+        fi
+    else
+        order=$(
+            printf '%s\n' "$rows" | awk -F'\t' '$1 ~ /^claude-opus-/ {print $1}' | sort -Vr
+            printf '%s\n' "$rows" | awk -F'\t' '$1 ~ /^claude-/ && $1 !~ /^claude-opus-/ {print $1}' | sort -Vr
+            printf '%s\n' "$rows" | awk -F'\t' '$1 !~ /^claude-/ {print $2"\t"$1}' \
+                | sort -k1,1n -k2,2 | cut -f2
+        )
+    fi
     for m in $order; do
         [ -n "$m" ] || continue
         model_works "$base" "$m" "$tok" && usable="$usable $m"
@@ -208,15 +250,8 @@ resolve_models() {
     usable=$(printf '%s\n' $usable)
     [ -n "$usable" ] || return 2
 
-    local primary opus sonnet mini
+    local primary
     primary=$(printf '%s\n' $usable | head -1)
-    opus=$(printf '%s\n' $usable | awk '/^claude-opus-/' | sort -Vr | head -1)
-    sonnet=$(printf '%s\n' $usable | awk -v s="${opus:-__none__}" \
-        '/^claude-/ && $0 != s' | sort -Vr | head -1)
-    # non-claude entries are already cost-ordered inside $usable
-    mini=$(printf '%s\n' $usable | awk '!/^claude-/' | head -1)
-    [ -n "${mini:-}" ]   || mini="${sonnet:-}"
-    [ -n "${mini:-}" ]   || mini="$primary"
 
     # Per-model client-side context marker, from the bundle's contextSuffixes.
     # It must NOT go on the wire: the relay answers 503 "无可用渠道" for the
@@ -225,13 +260,45 @@ resolve_models() {
     # deepseek-flash[1m] and every recorded message.model was deepseek-flash —
     # and uses it only to size its own context window. So the probes above used
     # the bare name and only the emitted value carries the suffix.
-    sfx() { jqr --arg m "$1" '.contextSuffixes[$m] // ""' "$prof"; }
+    # An explicit contextSuffixes map wins; otherwise a window of at least 1M
+    # earns the marker on its own, so it comes from the provider's own data.
+    sfx() {
+        local s cw
+        s=$(jqr --arg m "$1" '.contextSuffixes[$m] // ""' "$prof")
+        if [ -n "$s" ]; then printf '%s' "$s"; return 0; fi
+        [ -n "$cwf" ] || return 0
+        cw=$(printf '%s\n' "$rows" | awk -F'\t' -v m="$1" '$1 == m {print $3; exit}')
+        case "$cw" in
+            ''|*[!0-9]*) : ;;
+            *) [ "$cw" -ge 1048576 ] && printf '[1m]' ;;
+        esac
+    }
+    emit() { printf '%s=%s%s\n' "$1" "$2" "$(sfx "$2")"; }
 
-    printf 'ANTHROPIC_MODEL=%s%s\n' "$primary" "$(sfx "$primary")"
-    [ -n "${opus:-}" ]   && printf 'ANTHROPIC_DEFAULT_OPUS_MODEL=%s%s\n' "$opus" "$(sfx "$opus")"
-    [ -n "${sonnet:-}" ] && printf 'ANTHROPIC_DEFAULT_SONNET_MODEL=%s%s\n' "$sonnet" "$(sfx "$sonnet")"
-    printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s%s\n' "$mini" "$(sfx "$mini")"
-    printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s%s\n' "$mini" "$(sfx "$mini")"
+    if [ "$assign" = "single" ]; then
+        # one model in every slot, which is how this provider was hand-configured
+        emit ANTHROPIC_MODEL                    "$primary"
+        emit ANTHROPIC_DEFAULT_OPUS_MODEL       "$primary"
+        emit ANTHROPIC_DEFAULT_OPUS_MODEL_NAME  "$primary"
+        emit ANTHROPIC_DEFAULT_SONNET_MODEL     "$primary"
+        emit ANTHROPIC_DEFAULT_HAIKU_MODEL      "$primary"
+        emit ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME "$primary"
+        emit CLAUDE_CODE_SUBAGENT_MODEL         "$primary"
+    else
+        local opus sonnet mini
+        opus=$(printf '%s\n' $usable | awk '/^claude-opus-/' | sort -Vr | head -1)
+        sonnet=$(printf '%s\n' $usable | awk -v s="${opus:-__none__}" \
+            '/^claude-/ && $0 != s' | sort -Vr | head -1)
+        # non-claude entries are already cost-ordered inside $usable
+        mini=$(printf '%s\n' $usable | awk '!/^claude-/' | head -1)
+        [ -n "${mini:-}" ]   || mini="${sonnet:-}"
+        [ -n "${mini:-}" ]   || mini="$primary"
+        emit ANTHROPIC_MODEL "$primary"
+        [ -n "${opus:-}" ]   && emit ANTHROPIC_DEFAULT_OPUS_MODEL "$opus"
+        [ -n "${sonnet:-}" ] && emit ANTHROPIC_DEFAULT_SONNET_MODEL "$sonnet"
+        emit ANTHROPIC_DEFAULT_HAIKU_MODEL "$mini"
+        emit CLAUDE_CODE_SUBAGENT_MODEL "$mini"
+    fi
     return 0
 }
 
@@ -279,17 +346,17 @@ jqr '.env | to_entries[] | "\(.key)=\(.value)"' "$prof" > "$plan" 2>/dev/null ||
 
 resolve_url=$(jqr '.resolveModels.from // empty' "$prof" 2>/dev/null)
 if [ -n "$resolve_url" ]; then
-    want=$(jqr '.resolveModels.requiresEndpointType // "anthropic"' "$prof" 2>/dev/null)
     base=$(jqr '.env.ANTHROPIC_BASE_URL // empty' "$prof" 2>/dev/null)
-    resolved=$(resolve_models "$resolve_url" "$want" "$base" "$token" "$prof")
+    resolved=$(resolve_models "$prof" "$base" "$token")
     rc=$?
     if [ "$rc" -eq 0 ]; then
         printf '%s\n' "$resolved" >> "$plan"
     elif [ "$rc" -eq 2 ]; then
         not_switched "no model behind $base answered a probe just now.
-This relay rations the claude models and answers 402 'Budget pool quota has been
-exhausted' while its pricing page still lists them, so listing is not proof of
-availability. Refusing to switch onto a model that cannot serve a request."
+The provider's list endpoint names models it cannot currently serve: agentrouter
+rations the claude models and answers 402 'Budget pool quota has been exhausted'
+while still listing them. Refusing to switch onto a model that cannot serve a
+request — retry once the pool refills."
     else
         not_switched "could not fetch the model list from $resolve_url (no network, no cache)."
     fi
@@ -299,12 +366,19 @@ printf 'ANTHROPIC_AUTH_TOKEN=%s\n' "$token" >> "$plan"
 # ---------------------------------------------------------------------------
 # every key any bundle has ever set must be written this time, otherwise a key
 # from the previous provider lingers in the registry.
-all_keys=$(for f in "$BUNDLES"/*.json; do
-        [ -e "$f" ] || continue
-        case "$f" in *.local.json|.*) continue ;; esac
-        jqr '.env | keys[]' "$f" 2>/dev/null
-    done | sort -u)
-all_keys=$(printf '%s\nANTHROPIC_AUTH_TOKEN' "$all_keys" | sort -u)
+all_keys=$(
+    { for f in "$BUNDLES"/*.json; do
+          [ -e "$f" ] || continue
+          case "$f" in *.local.json|.*) continue ;; esac
+          jqr '.env | keys[]' "$f" 2>/dev/null
+      done
+      # Model names are resolved at switch time now rather than declared in a
+      # bundle, so the env blocks alone can no longer enumerate them. Read back
+      # the registry for the namespace this script owns instead.
+      reg query "$ENV_KEY" 2>/dev/null |
+          sed -n 's/^    \(\(ANTHROPIC_\|CLAUDE_CODE_\)[A-Za-z0-9_]*\).*/\1/p'
+      printf 'ANTHROPIC_AUTH_TOKEN\n'
+    } | grep -v '^$' | sort -u)
 
 failed=""
 while IFS= read -r key; do

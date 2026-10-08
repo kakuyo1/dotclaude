@@ -6,10 +6,12 @@
   },
   "resolveModels": {
     "from": "https://agentrouter.org/api/pricing",
-    "requiresEndpointType": "anthropic"
+    "idField": "model_name",
+    "ratioField": "model_ratio",
+    "requiresEndpointType": "anthropic",
+    "assignment": "family"
   },
   "contextSuffixes": {
     "deepseek-v4-flash": "[1m]"
   }
 }
-
