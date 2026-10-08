@@ -8,9 +8,11 @@ allowed-tools: Bash(bash ~/.claude/bundle-switch.sh:*)
 
 !`bash ~/.claude/bundle-switch.sh $ARGUMENTS`
 
-The text above is the script's stdout.
+The text above is the script's stdout; you were invoked with `$ARGUMENTS`. The
+script consumes the arguments itself, so this line is the only place you see
+them.
 
-If it starts with `NEW BUNDLE`, the user is adding a provider: read
+If that stdout starts with `NEW BUNDLE`, the user is adding a provider: read
 `references/new.md` and follow it, instead of relaying the stdout.
 
 Otherwise relay the stdout verbatim, then add at most one sentence of
