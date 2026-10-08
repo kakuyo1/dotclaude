@@ -66,9 +66,9 @@ runs.
 
 ## 4. Set NO_PROXY by reachability
 
-`env.NO_PROXY` names the hosts to reach directly, bypassing Clash. A host the
-machine can reach on its own belongs there; a foreign one must not be, or the
-provider is unreachable in the terminal the user actually runs. Keep
+`env.NO_PROXY` names the hosts to reach directly, bypassing the proxy. A host
+the machine can reach on its own belongs there; a foreign one must not be, or
+the provider is unreachable in the terminal the user actually runs. Keep
 `localhost,127.0.0.1,::1` in every bundle, and read the tracked bundles for the
 existing lists. One curl with and without `-x "$HTTP_PROXY"` tells you which
 side a host is on.
