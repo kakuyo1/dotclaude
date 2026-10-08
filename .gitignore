@@ -55,6 +55,7 @@ CLAUDE.local.md
 todos/
 statsig/
 dev-mods/
+plans/
 
 # machine-specific overrides (settings.local.json, CLAUDE.local.md, ...)
 *.local.*
