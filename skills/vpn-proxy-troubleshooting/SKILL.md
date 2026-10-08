@@ -1,140 +1,153 @@
 ---
 name: vpn-proxy-troubleshooting
 description: >
-  Diagnose and fix proxy/VPN/network issues on this Windows machine (China network, GFW-blocked sites).
-  Use whenever any network call fails — curl exit 35 (SSL connect error) / 28 (timeout) / 7 (can't connect),
-  connection resets, or 403 on foreign sites like Wikipedia/GitHub/Google — or whenever downloads, git
-  clone/push, ssh, pip, playwright, or scrapling fail, or the user mentions 代理 / VPN / 翻墙 / 被墙 / 上不了网 /
-  下载失败 / 网络不通. Covers: locating the local Clash/V2Ray proxy (Windows registry + netstat + port
-  probing), routing tools through it (env vars vs per-tool flags), and tool-specific pitfalls: scrapling
-  CLI cannot download binaries (use FetcherSession with an explicit proxy), curl_cffi ignores env proxy
-  vars, scrapling's Fetcher.get swallows the proxy kwarg, and Playwright/Chrome inherits the Windows
-  system proxy automatically.
+  Diagnose and fix proxy/VPN/network failures on this machine (China network, GFW-blocked sites):
+  locating the local proxy port, routing tools through it, and the per-tool traps that ignore it —
+  curl_cffi, scrapling, SSH, Chromium.
+  Use on any failed network call — curl exit 35 (SSL connect error) / 28 (timeout) / 7 (can't
+  connect), connection resets, 403 on foreign sites, or failed downloads, git clone/push, ssh, pip,
+  playwright, scrapling — or when the user says 代理 / VPN / 翻墙 / 被墙 / 上不了网 / 下载失败 / 网络不通.
 ---
-# VPN / 代理排障
+# VPN / proxy troubleshooting
 
-## 先分诊：有代理才排障，没有就直接说
+## Triage: is there a proxy at all?
 
-动手前先确认**本机有没有可用的代理/VPN**——问一句用户，或 `netstat` 扫一眼常见端口（§1）：
+Establish whether this machine has a working proxy before concluding anything — ask the user, or run
+`scripts/probe_proxy.sh`.
 
-- **没有代理/VPN** + 目标是 GitHub → **先尝试 ghfast.top 镜像拉取**：
+**No proxy** → the target is GFW-blocked and there is nothing to route through. That is the answer,
+not a tool bug. Skip port probing — there is no port to probe.
+
+- GitHub target: try the `ghfast.top` mirror first.
   ```bash
-  # git clone 镜像示例
   git clone https://ghfast.top/https://github.com/user/repo.git
-
-  # curl 下载示例
   curl -L -o file.zip https://ghfast.top/https://github.com/user/repo/releases/download/v1.0/file.zip
   ```
+- Mirror also fails, or the target is elsewhere (Wikipedia, Google, foreign downloads): say plainly
+  that GFW blocks it, no proxy is available, and it cannot be worked around. Options that remain:
+  retry intermittently with a fast-fail timeout so commands don't hang, or move the network work to a
+  machine that has a VPN.
 
-  - 如果镜像也不通 → **直接明确告诉用户：这是 GFW 封锁，本机没有代理，绕不过去**。跳过下面的端口探测——没有端口可探，纯浪费时间。
-  - 这不是工具或代码的错，是网络被墙。
-  - 其他可行做法：间歇性重试（被墙时通时断，配快速失败超时，别让命令挂死）；把需要联网的活放到有 VPN 的机器上做。
-- **没有代理/VPN** + 目标是其他被墙站点（Wikipedia / Google / 外网下载）→ **直接明确告诉用户：这是 GFW 封锁，本机没有代理，绕不过去**。跳过下面的端口探测。
-- **有代理** → 跑 `scripts/probe_proxy.sh` 定位端口，再按需看各节。
+**Proxy present** → start at §1 for the port, then §2–§5 as needed.
 
-## 0. 症状 → 判断
+## Symptom → meaning
 
-| 症状                                                                       | 含义                                                  |
-| -------------------------------------------------------------------------- | ----------------------------------------------------- |
-| curl exit 35（SSL connect error）                                          | 目标被墙 / 连接被重置，代理没生效                     |
-| curl exit 28（timeout）                                                    | 同上（超时版）                                        |
-| exit 7（Could not connect to server ... after 0 ms）                       | 代理端口没开，或该目标走代理被秒拒                    |
-| 403 / 4xx                                                                  | 网络通，但被目标反爬（换 impersonate / UA / 直链）    |
-| `git push` 报 `Please make sure you have the correct access rights...` | 常是 SSH 连接被断，不是密钥问题——先测 SSH，别查密钥 |
-| `ssh -T git@github.com` 报 `Connection closed by ... port 22/443`      | GFW 重置 SSH 握手，见 §3                             |
+| Symptom | Meaning |
+| --- | --- |
+| curl exit 35 (SSL connect error) | target blocked / connection reset — proxy not taking effect |
+| curl exit 28 (timeout) | the same, timeout flavour |
+| exit 7 (`Could not connect to server ... after 0 ms`) | proxy port isn't open, or the proxy refused this target instantly |
+| 403 / other 4xx | network is fine; the target is blocking the client (switch impersonate / UA / direct link) |
+| `git push` → `Please make sure you have the correct access rights...` | usually a dropped SSH connection, not a key problem — test SSH (§3) before touching keys |
+| `ssh -T git@github.com` → `Connection closed by ... port 22/443` | GFW reset the SSH handshake (§3) |
 
-**第一反应永远是先探测代理，不要直接怀疑代码。**
+Probe the proxy before suspecting the code.
 
-## 1. 找到本机代理
+## Diagnostic order
+
+Direct attempt fails → `probe_proxy.sh` for port and liveness → retry through the proxy → check the
+tool's own proxy option (curl_cffi and requests differ; don't assume env vars apply) → retry once or
+switch to a direct link (transient failures are common) → if the user says the VPN is up but nothing
+listens, ask whether their client runs in system-proxy or TUN mode.
+
+Exception: git push / ssh failures skip this loop. SSH takes no HTTP proxy env — go to §3. A curl
+verdict from `probe_proxy.sh` says nothing about SSH.
+
+## 1. Locate the local proxy
 
 ```bash
-# Windows 系统代理设置（ProxyEnable=1 且 ProxyServer 有值 = 有代理）
-reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | grep -iE "proxy|enable"
-
-# 监听中的常见代理端口
-netstat -an | grep LISTENING | grep -E "127.0.0.1:(7890|7897|1080|10809|8888|8118|2080|9910)"
-
-# 逐个验证哪个端口真能连到境外（curl 走代理测试）
-for p in 7890 7897 10809 1080 8118 8888; do
-  timeout 3 curl -s -o /dev/null -w "port $p: %{http_code}\n" -x "http://127.0.0.1:$p" "https://en.wikipedia.org" 2>/dev/null && break
-done
+bash scripts/probe_proxy.sh
 ```
 
-或直接跑 `scripts/probe_proxy.sh`，它把上面三步合并输出结论。
+It runs all three checks and prints the ready-to-use `export https_proxy=...` line for the port that
+works: the Windows system proxy registry key, the listening common ports, and a live request through
+each port.
 
-## 2. 让工具走代理
+`ProxyEnable=1` plus a `ProxyServer` value in that registry key means a system proxy is configured:
 
-- **通用环境变量**（curl / git / pip 大部分场景）：
+```bash
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | grep -iE "proxy|enable"
+```
+
+## 2. Route a tool through the proxy
+
+- General env vars, enough for curl / git / pip:
   ```bash
   export https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890
   ```
-- **单次**：`curl -x http://127.0.0.1:7890 <url>`
-- **Chrome / Playwright**：不用配置——Windows 系统代理被 Chromium 自动继承（见 §5）
-- 注意：每条 Bash 命令是独立 shell，env 不持久；需要时在同一命令里 export + 使用
+- One call: `curl -x http://127.0.0.1:7890 <url>`
+- Chrome / Playwright: nothing to configure — Chromium inherits the Windows system proxy (§5).
+- Each Bash call is a fresh shell, so env vars do not persist: export and use within the same command.
 
-## 3. SSH / Git 的坑（GFW 重置 SSH）
+## 3. SSH / git — the HTTP proxy does not apply
 
-SSH 不走系统 HTTP 代理，`https_proxy` 环境变量对 SSH 无效。GFW 对 GitHub 是选择性干扰：同一时刻 curl / winget 下载可能直连成功，SSH 握手却被重置（22/443 都可能），且时通时断。TCP 层端口可达不代表 SSH 握手能通——GFW 按协议层拦截。
+SSH ignores `https_proxy`. GFW interference on GitHub is selective and intermittent: at the same
+moment a plain HTTPS download can succeed while the SSH handshake is reset, on port 22 and 443 alike.
+A reachable TCP port does not mean the handshake passes — the block sits at the protocol layer.
 
-解法：SSH 走 Clash SOCKS（7890 是混合端口，SOCKS5 可用）。用 connect.exe（Git for Windows 自带）建隧道：
+Route SSH through Clash's SOCKS port (7890 is a mixed port, SOCKS5 works) via `connect.exe`, which
+ships with Git for Windows:
 
 ```bash
-# 1. 定位 connect.exe（bash 内通用路径，跨盘符可移植）
+# 1. locate it (portable across drives from bash)
 command -v connect || cygpath -w /mingw64/bin/connect.exe
 
-# 2. 裸测隧道（输出 SSH banner = 通；ssh.github.com:443 是 GitHub 官方备用 SSH 端口）
+# 2. smoke-test the tunnel: an SSH banner means it works
 timeout 12 /mingw64/bin/connect.exe -S 127.0.0.1:7890 ssh.github.com 443 </dev/null
-# 成功示例输出：SSH-2.0-...
+# success prints: SSH-2.0-...
 
-# 3. 一次性 push（不永久改配置）
+# 3. one-off push, no permanent config change
 GIT_SSH_COMMAND='ssh -o ProxyCommand="/mingw64/bin/connect.exe -S 127.0.0.1:7890 %h %p"' git push origin master
 ```
 
-永久生效：`~/.ssh/config` 的 github.com 段加 `ProxyCommand`。ssh config 是 cmd 语境，需要 Windows 绝对路径——先用 `cygpath -w /mingw64/bin/connect.exe` 取本机实际路径再填入：
+To make it permanent, add a github.com block to `~/.ssh/config`. ssh config is read by cmd, so it
+needs a Windows absolute path — take the real one from `cygpath -w /mingw64/bin/connect.exe`:
 
 ```ini
-# 参考示例：<connect 绝对路径> 替换为 cygpath 输出
 Host github.com
     HostName ssh.github.com
     Port 443
     User git
-    ProxyCommand <connect 绝对路径> -S 127.0.0.1:7890 %h %p
+    ProxyCommand <absolute path to connect.exe> -S 127.0.0.1:7890 %h %p
 ```
 
-注意：Clash 关闭时 ProxyCommand 会让 SSH 直接失败。权衡后接受——直连本身时通时断，代理路由更稳。
+With Clash closed this ProxyCommand makes SSH fail outright. Accepted trade-off: direct SSH is
+intermittent anyway, and the proxy route is steadier.
 
-## 4. scrapling 的坑（重要）
+## 4. scrapling / curl_cffi traps
 
-scrapling 底层是 curl_cffi，代理行为与 curl.exe 不同：
+scrapling sits on curl_cffi, whose proxy behaviour differs from curl.exe:
 
-1. **CLI 只支持文本**：`scrapling extract get` 输出只接受 `.md` / `.html` / `.txt` 扩展名，下二进制会报 `ValueError: Unknown file type`。**下载图片/文件必须用 Python API**：
+1. The CLI writes text only — `scrapling extract get` accepts `.md` / `.html` / `.txt` and raises
+   `ValueError: Unknown file type` on binaries. Download images and files through the Python API:
    ```python
    from scrapling.fetchers import FetcherSession
    with FetcherSession(impersonate='chrome', proxy='http://127.0.0.1:7890', timeout=60) as s:
        page = s.get(url, headers={'Accept': 'image/png,image/*;q=0.8'})
-       open('out.png', 'wb').write(page.body)   # page.body 是原始字节
+       open('out.png', 'wb').write(page.body)   # page.body is raw bytes
    ```
-2. **curl_cffi 不读环境变量 HTTPS_PROXY**：设了 env 也没用，必须给 session 显式传 `proxy=`。
-3. **`Fetcher.get(url, proxy=...)` 会静默吞掉 proxy 参数**（日志显示 `Proxy 'None'`）——必须用 `FetcherSession(proxy=...)`。
-4. **"Failed to connect ... over proxy ... after 0 ms"**：瞬时或主机特定故障。对策：重试一次；或改用目标服务的 API 拿直链（见下条）；en.wikipedia.org 通而 upload.wikimedia.org 断时，先取直链再请求。
-5. **403 = 反爬**：加 `impersonate='chrome'`；下载图片时 Wikimedia 会按 Accept 头给 WebP（文件名还是 .png），强制 `Accept: image/png` 拿真 PNG。
-6. **拿直链**（Wikimedia 系）：`action=query&prop=imageinfo&iiprop=url&iiurlwidth=1200` 返回 thumburl，直接请求直链比跟 Special:FilePath 重定向稳。
+2. curl_cffi ignores the `HTTPS_PROXY` env var — pass `proxy=` to the session explicitly.
+3. `Fetcher.get(url, proxy=...)` silently drops the kwarg (the log shows `Proxy 'None'`) — use
+   `FetcherSession(proxy=...)`.
+4. `Failed to connect ... over proxy ... after 0 ms` is a transient or host-specific failure. Retry
+   once, or switch to the target's API for a direct link; when en.wikipedia.org works but
+   upload.wikimedia.org does not, fetch the direct link first.
+5. 403 means anti-scraping: add `impersonate='chrome'`. When downloading images Wikimedia hands back
+   WebP under an image `Accept` header even though the filename ends in `.png` — force
+   `Accept: image/png` to get a real PNG.
+6. Direct links (Wikimedia family): `action=query&prop=imageinfo&iiprop=url&iiurlwidth=1200` returns a
+   thumburl; requesting that beats following the `Special:FilePath` redirect.
 
-venv 位置：`~/.claude/skills/scrapling/.venv/Scripts/python.exe`（scrapling[all] 里自带 playwright）。
+venv: `~/.claude/skills/scrapling/.venv/Scripts/python.exe` (scrapling[all] bundles playwright).
 
-## 5. Playwright 截图导出（本机免下载浏览器）
+## 5. Chromium without downloading a browser
+
+`playwright install chromium` is itself a blocked download. Use the system Chrome instead:
 
 ```python
-from playwright.sync_api import sync_playwright
-browser = p.chromium.launch(channel='chrome')   # 用系统 Chrome，免 playwright install chromium
-page = browser.new_page(device_scale_factor=2)  # 2x 清晰度
+browser = p.chromium.launch(channel='chrome')   # system Chrome, no chromium download
+page = browser.new_page(device_scale_factor=2)  # 2x sharpness
 page.goto(f"file://{pathlib.Path(src).resolve()}")
-page.wait_for_load_state("networkidle")         # 等 Google Fonts 等资源加载完
+page.wait_for_load_state("networkidle")         # wait for webfonts and other assets
 page.locator("svg").first.screenshot(path=out, omit_background=True)
 ```
-
-## 6. 诊断顺序（有代理时的默认流程）
-
-1. 直连失败 → 2. `probe_proxy.sh` 确认代理在不在、哪个端口 → 3. 带上代理重试 → 4. 还不行检查**该工具自己的代理参数**（curl_cffi/requests 各自不同，别假设 env 生效）→ 5. 仍失败换直链或重试一次（瞬时故障不少见）→ 6. 用户说「开了 VPN」但探测不到端口时，让用户确认 VPN 客户端是「系统代理」还是「TUN」模式。
-
-**例外**：git push / ssh 失败不走上面的 curl 流程——SSH 不吃 HTTP 代理 env，直接按 §3 处理（probe_proxy 的 curl 结论对 SSH 不适用）。
