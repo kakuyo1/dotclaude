@@ -33,27 +33,29 @@ Everything after this point can proceed while the user does that.
 
 ## 3. Find where the model list lives
 
-Pick the family, and the `resolveModels` block follows.
+Two shapes cover what this flow writes. Which one the provider answers decides
+the `resolveModels` block.
 
-- **A New API / One API relay** — agentrouter.org is one, and traxnode.com is
-  another. `GET <base>/api/pricing` returns `data[]` rows carrying
-  `model_name`, `model_ratio` and `supported_endpoint_types`, which map
-  straight onto `idField`, `ratioField` and `requiresEndpointType` — use
-  `"model_name"`, `"model_ratio"`, `"anthropic"`. The last one is not optional:
-  these relays serve the same models over OpenAI-compatible routes too, and
-  those answer 404 to `/v1/messages`. Some instances gate `/api/pricing` behind
-  the key (traxnode answers 401 `AUTH_UNAUTHORIZED`) and some do not
-  (agentrouter). The script sends the key either way, but a gated endpoint means
-  you cannot read the field names yourself: take them from the docs, and fall
-  back to `/v1/models` with `idField: "id"` if the pricing shape turns out not
-  to match.
-- **A first-party API** — DeepSeek is one: `GET <base>/models`, `idField: "id"`,
-  plus `contextWindowField` when the response reports a window.
+- **A priced catalog** — New API's shape, `GET <base>/api/pricing`: `data[]`
+  rows carrying `model_name`, `model_ratio` and `supported_endpoint_types`,
+  mapping onto `idField`, `ratioField` and `requiresEndpointType` as
+  `"model_name"`, `"model_ratio"`, `"anthropic"`. New API is not the only relay
+  software, so confirm the family rather than assuming it: `GET /api/status`
+  answering with data, or any error body carrying `new_api_error`, is the same
+  fingerprint. The endpoint-type filter is not optional — these relays serve the
+  same models over OpenAI-compatible routes too, and those answer 404 to
+  `/v1/messages`. Some instances serve `/api/pricing` publicly and some gate it
+  behind the key; a gated one means you cannot read the field names yourself, so
+  take them from the docs and fall back to the shape below.
+- **A plain model list** — `GET <base>/models`, `idField: "id"`, plus
+  `contextWindowField` when the response reports a window. This is what a
+  provider's own API exposes, and the fallback when `/api/pricing` is gated.
 
 `ANTHROPIC_BASE_URL` is whatever the provider's docs call its Anthropic
-endpoint. DeepSeek's carries a path (`https://api.deepseek.com/anthropic`);
-a New API relay's is the bare origin. The script appends `/v1/messages` itself,
-so never add `/v1` here.
+endpoint. Sometimes that carries a path and sometimes it is the bare origin,
+depending on where the provider hangs its Anthropic-compatible route; the docs
+decide, not the pattern. The script appends `/v1/messages` itself, so never add
+`/v1` here.
 
 Two properties of the script shape what you choose. The list fetch sends
 `Authorization: Bearer`, so `from` must accept the key as a Bearer token. And
@@ -64,12 +66,12 @@ runs.
 
 ## 4. Set NO_PROXY by reachability
 
-`env.NO_PROXY` names the hosts to reach directly, bypassing Clash. A domestic
-host belongs there (`api.deepseek.com` is in DeepSeek's); a foreign one must not
-be (`agentrouter.org` is absent from agentrouter's), or the provider is
-unreachable in the terminal the user actually runs. Keep
-`localhost,127.0.0.1,::1` in every bundle. One curl with and without
-`-x "$HTTP_PROXY"` tells you which side a host is on.
+`env.NO_PROXY` names the hosts to reach directly, bypassing Clash. A host the
+machine can reach on its own belongs there; a foreign one must not be, or the
+provider is unreachable in the terminal the user actually runs. Keep
+`localhost,127.0.0.1,::1` in every bundle, and read the tracked bundles for the
+existing lists. One curl with and without `-x "$HTTP_PROXY"` tells you which
+side a host is on.
 
 ## 5. Choose the models
 
@@ -79,8 +81,8 @@ unreachable in the terminal the user actually runs. Keep
   opus/sonnet/haiku slots and the cheapest non-claude model fills the subagent
   slot. A relay that rations its claude models degrades instead of breaking: a
   candidate whose probe fails is dropped, not guessed around.
-- `"single"` when the provider is effectively one model (this is DeepSeek's):
-  one name in every slot.
+- `"single"` when the provider effectively offers one model: one name in every
+  slot.
 
 Prefer a name this repo already trusts, rather than the cheapest untried thing.
 They are recorded in the existing bundles — list the tracked ones with
@@ -90,9 +92,9 @@ regexes. If the new provider offers one of those names, say so and offer it. One
 catch: `prefer` is honoured by `"single"` only, so a `prefer` written into a
 `"family"` bundle is config that never runs.
 
-`contextSuffixes` is an assertion about a window the provider does not publish —
-agentrouter's `"deepseek-v4-flash": "[1m]"` is the existing one. The suffix never
-reaches the wire; Claude Code strips it and uses it only to size its own context.
+`contextSuffixes` is an assertion about a window the provider does not publish;
+the maps in the tracked bundles are the existing ones. The suffix never reaches
+the wire; Claude Code strips it and uses it only to size its own context.
 Add an entry only when you know the window and the list endpoint does not report
 it. When `contextWindowField` is set and the endpoint reports a window of 1M or
 more, the marker is derived and an entry would be redundant.
