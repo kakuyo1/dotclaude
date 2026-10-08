@@ -7,6 +7,12 @@ and only one of them is yours to write: `<name>.json` describes it, and
 The field semantics you are about to write live in the header of
 `~/.claude/bundle-switch.sh`. Read that first. This file says what to find out.
 
+There are two ports of the script. On Windows the invocation is
+`powershell -File ~/.claude/bundle-switch.ps1 <name>`; on WSL and Linux it is
+`bash ~/.claude/bundle-switch.sh <name>`. Same script, same bundles, two
+toolchains (PowerShell + curl.exe versus bash + jq + curl). Wherever this file
+names `bundle-switch.sh`, use the `.ps1` port on Windows.
+
 ## 1. Ask which provider
 
 Ask which provider to add and for a link to its docs or API page, unless the
@@ -109,11 +115,12 @@ file is tracked in a public repo, which is the whole reason the key lives in the
 
 ## 7. Activate it, and let the probes judge
 
-Once the token file exists, run `bash ~/.claude/bundle-switch.sh <name>`. This is
-a real switch, not a dry run, and it is also the only test that the config is
-right: it fetches the list, probes one token against every candidate, and writes
-the registry only when something answered 200. It refuses in two distinguishable
-ways, and the message says which one you got:
+Once the token file exists, run the switch — `bash ~/.claude/bundle-switch.sh
+<name>` on WSL/Linux, `powershell -File ~/.claude/bundle-switch.ps1 <name>` on
+Windows. This is a real switch, not a dry run, and it is also the only test that
+the config is right: it fetches the list, probes one token against every
+candidate, and writes the registry only when something answered 200. It refuses
+in two distinguishable ways, and the message says which one you got:
 
 - the list could not be fetched — `from` is wrong, or answers something other
   than `{data: [...]}` to a Bearer key;
