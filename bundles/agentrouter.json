@@ -1,0 +1,11 @@
+{
+  "name": "agentrouter",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://agentrouter.org",
+    "NO_PROXY": "localhost,127.0.0.1,::1"
+  },
+  "resolveModels": {
+    "from": "https://agentrouter.org/api/pricing",
+    "requiresEndpointType": "anthropic"
+  }
+}

@@ -78,43 +78,88 @@ if [[ "$ctx_pct" =~ ^[0-9]+$ ]] && (( ctx_pct > 0 )); then
   ctx_segment=" ${color}[${ctx_pct}%]${RESET}"
 fi
 
-# --- cost --------------------------------------------------------------------
-# Account balance from the DeepSeek balance API, plus this session's line churn.
+# --- provider-aware balance ---------------------------------------------------
+# The provider is read from ANTHROPIC_BASE_URL in this process's own
+# environment, so there is no state file to drift out of sync with reality.
+# Each provider keeps its own cache file, so a balance fetched for one can never
+# render while the other is active.
+#
 # Claude Code's own cost.total_cost_usd is deliberately NOT used: it prices this
 # model at a default Claude rate card and overstated the real bill by ~50x.
-# The fetch is cached for BALANCE_TTL seconds — ~200ms is cheap but there is no
-# reason to make the call on every 5s refresh. The token is only ever passed as
-# a curl header; it is never written to disk. If the fetch fails, the last
-# cached value is still shown.
+# BALANCE_TTL: ~200ms per call is cheap but pointless on a 5s refresh. The token
+# is only ever passed as a curl header; it is never written to disk. On fetch
+# failure the last cached value still shows; with no usable number the segment
+# degrades to a bare provider badge.
 cost_segment=""
 cost_part=""
 cost_color=$GRAY
-balance_cache="/tmp/claude-${UID}-state/deepseek-balance"
+state_dir="/tmp/claude-${UID}-state"
 BALANCE_TTL=60
-if [[ -n "$ANTHROPIC_AUTH_TOKEN" ]]; then
-  bal_age=$(( BALANCE_TTL + 1 ))
-  if [[ -f "$balance_cache" ]]; then
-    bal_mtime=$(file_mtime_epoch "$balance_cache")
-    [[ -n "$bal_mtime" ]] && bal_age=$(( $(date +%s) - bal_mtime ))
-  fi
-  if (( bal_age >= BALANCE_TTL )); then
-    fresh_bal=$(curl -sS --max-time 5 \
-      -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
-      https://api.deepseek.com/user/balance 2>/dev/null |
-      jq -r '.balance_infos[0].total_balance // empty' 2>/dev/null || true)
-    if [[ "$fresh_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-      mkdir -p "$(dirname "$balance_cache")"
-      printf '%s' "$fresh_bal" > "$balance_cache.tmp.$$" &&
-        mv "$balance_cache.tmp.$$" "$balance_cache"
+
+provider=""
+symbol=""
+case "${ANTHROPIC_BASE_URL:-}" in
+  *deepseek*)    provider=deepseek;    symbol='¥' ;;
+  *agentrouter*) provider=agentrouter; symbol='$' ;;
+  *)             provider="" ;;
+esac
+
+# Prints one number, or nothing. An unexpected response shape must yield nothing
+# rather than a wrong number.
+fetch_balance() {
+  case "$provider" in
+    deepseek)
+      curl -sS --max-time 5 \
+        -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+        https://api.deepseek.com/user/balance 2>/dev/null |
+        jq -r '.balance_infos[0].total_balance // empty' 2>/dev/null || true
+      ;;
+    agentrouter)
+      # This relay publishes no balance endpoint. The OpenAI-compatible billing
+      # route below exists (it rejects a dummy key with new_api_error rather
+      # than 404), but its response shape and unit are UNVERIFIED.
+      # ponytail: written blind. New API counts quota in units of 500000/$1, so
+      # if this ever returns a `quota` integer it must be divided before it is
+      # rendered as a currency amount. Compare once against the web dashboard
+      # before trusting any number here; until then the badge is the honest
+      # output.
+      curl -sS --max-time 5 \
+        -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+        https://agentrouter.org/v1/dashboard/billing/subscription 2>/dev/null |
+        jq -r '(.hard_limit_usd // .soft_limit_usd // .total_available // empty)
+               | if type == "number" then tostring else empty end' 2>/dev/null || true
+      ;;
+  esac
+}
+
+if [[ -n "$provider" ]]; then
+  balance_cache="$state_dir/${provider}-balance"
+  if [[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+    bal_age=$(( BALANCE_TTL + 1 ))
+    if [[ -f "$balance_cache" ]]; then
+      bal_mtime=$(file_mtime_epoch "$balance_cache")
+      [[ -n "$bal_mtime" ]] && bal_age=$(( $(date +%s) - bal_mtime ))
+    fi
+    if (( bal_age >= BALANCE_TTL )); then
+      fresh_bal=$(fetch_balance)
+      if [[ "$fresh_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        mkdir -p "$state_dir"
+        printf '%s' "$fresh_bal" > "$balance_cache.tmp.$$" &&
+          mv "$balance_cache.tmp.$$" "$balance_cache"
+      fi
+    fi
+    cached_bal=$(cat "$balance_cache" 2>/dev/null || true)
+    if [[ "$cached_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      cost_part="${symbol}${cached_bal}"
+      if awk -v b="$cached_bal" 'BEGIN { exit !(b + 0 < 1) }'; then
+        cost_color=$RED
+      fi
     fi
   fi
-  cached_bal=$(cat "$balance_cache" 2>/dev/null || true)
-  if [[ "$cached_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-    cost_part="¥${cached_bal}"
-    if awk -v b="$cached_bal" 'BEGIN { exit !(b + 0 < 1) }'; then
-      cost_color=$RED
-    fi
-  fi
+  # Badge fallback: provider is known but there is no usable number (no token,
+  # endpoint gone, shape unrecognised). Still says which account is active.
+  # Never red — red is reserved for a real balance that is nearly exhausted.
+  [[ -n "$cost_part" ]] || cost_part="$provider"
 fi
 lines_part=""
 if [[ "$lines_added" =~ ^[0-9]+$ && "$lines_removed" =~ ^[0-9]+$ ]] &&

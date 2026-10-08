@@ -1,27 +1,16 @@
 {
   "cleanupPeriodDays": 3650,
   "env": {
-    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-    "ANTHROPIC_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_deepseek_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-flash[1m]",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "deepseek-flash[1m]",
-    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash[1m]",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
     "BASH_DEFAULT_TIMEOUT_MS": "240000",
     "HTTP_PROXY": "http://127.0.0.1:7890",
-    "HTTPS_PROXY": "http://127.0.0.1:7890",
-    "NO_PROXY": "localhost,127.0.0.1,::1,api.deepseek.com,.deepseek.com"
+    "HTTPS_PROXY": "http://127.0.0.1:7890"
   },
   "permissions": {
     "defaultMode": "bypassPermissions"
   },
-  "model": "deepseek-v4-flash[1m]",
   "skillOverrides": {
     "archify": "user-invocable-only",
     "claude-api": "user-invocable-only",
