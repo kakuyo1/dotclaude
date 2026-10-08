@@ -23,7 +23,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "title"
+        "title",
+        "output"
       ],
       "properties": {
         "title": {
@@ -33,31 +34,26 @@
         "locale": {
           "$ref": "common.schema.json#/$defs/locale"
         },
+        "translations": {
+          "$ref": "common.schema.json#/$defs/translations"
+        },
         "subtitle": {
           "type": "string"
         },
         "output": {
-          "type": "string"
+          "$ref": "common.schema.json#/$defs/portableOutputPath"
         },
         "animation": {
-          "enum": [
-            "trace",
-            "none"
-          ]
+          "$ref": "common.schema.json#/$defs/animation"
         },
         "visual_preset": {
-          "enum": [
-            "classic",
-            "signal-flow",
-            "blueprint",
-            "editorial"
-          ]
+          "$ref": "common.schema.json#/$defs/visualPreset"
         },
         "quality_profile": {
-          "enum": [
-            "standard",
-            "showcase"
-          ]
+          "$ref": "common.schema.json#/$defs/qualityProfile"
+        },
+        "repository": {
+          "$ref": "common.schema.json#/$defs/repository"
         },
         "views": {
           "$ref": "common.schema.json#/$defs/guidedViews"
@@ -146,8 +142,12 @@
           "tag": {
             "type": "string"
           },
+          "icon": { "$ref": "common.schema.json#/$defs/nodeIcon" },
           "brand": {
             "$ref": "common.schema.json#/$defs/brandMark"
+          },
+          "sources": {
+            "$ref": "common.schema.json#/$defs/sourceReferences"
           },
           "stage": {
             "type": "integer",
@@ -211,20 +211,10 @@
             ]
           },
           "fromSide": {
-            "enum": [
-              "left",
-              "right",
-              "top",
-              "bottom"
-            ]
+            "$ref": "common.schema.json#/$defs/side"
           },
           "toSide": {
-            "enum": [
-              "left",
-              "right",
-              "top",
-              "bottom"
-            ]
+            "$ref": "common.schema.json#/$defs/side"
           },
           "channelX": {
             "type": "number"
@@ -252,8 +242,7 @@
             }
           },
           "width": {
-            "type": "number",
-            "minimum": 0.5
+            "$ref": "common.schema.json#/$defs/relationshipWidth"
           }
         }
       }
