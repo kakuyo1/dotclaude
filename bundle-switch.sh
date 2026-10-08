@@ -4,6 +4,7 @@
 #   bash bundle-switch.sh                 list bundles + report the active one
 #   bash bundle-switch.sh status          same
 #   bash bundle-switch.sh --help          this text
+#   bash bundle-switch.sh --new           the add-a-provider flow, not a switch
 #   bash bundle-switch.sh <name>          switch to that bundle
 #
 # Invoked from inside Claude Code as the `/bundle` skill.
@@ -64,7 +65,6 @@ set -uo pipefail
 
 CLAUDE_DIR="$HOME/.claude"
 BUNDLES="$CLAUDE_DIR/bundles"
-MODEL_CACHE="/tmp/claude-${UID}-state/agentrouter-models.cache.json"
 ENV_KEY='HKCU\Environment'
 
 not_switched() { printf '\nNOT SWITCHED — %s\n\n' "$1"; exit 0; }
@@ -141,9 +141,10 @@ report() {
 #   requiresEndpointType  optional. Keep only models offering that wire format.
 #   assignment            "family" -> opus / sonnet / mini slots (agentrouter)
 #                         "single" -> one model in every slot (DeepSeek)
-#   prefer                optional regex. Matching models are probed first, and
-#                         if none match the ordering still yields a candidate,
-#                         so a rename degrades instead of breaking.
+#   prefer                optional regex, "single" only — "family" has a fixed
+#                         order and ignores it. Matching models are probed
+#                         first, and if none match the ordering still yields a
+#                         candidate, so a rename degrades instead of breaking.
 #
 # Emits KEY=VALUE lines. A slot with no working candidate is omitted rather than
 # guessed. Returns 1 when the list cannot be obtained at all, 2 when nothing in
@@ -191,6 +192,12 @@ resolve_models() {
     local prof="$1" base="$2" tok="$3" json
     local url idf ratiof cwf ep assign prefer
 
+    # Cached per bundle. A single shared file served one provider's list to
+    # another provider's probe whenever a fetch failed, and the failure it
+    # produced — every candidate rejected — reads as a quota problem rather
+    # than a cache mixup.
+    local cache="/tmp/claude-${UID}-state/$(basename "$prof" .json)-models.cache.json"
+
     url=$(jqr '.resolveModels.from // empty' "$prof")
     [ -n "$url" ] || return 1
     idf=$(jqr '.resolveModels.idField // "model_name"' "$prof")
@@ -203,11 +210,11 @@ resolve_models() {
     json=$(curl -sS --max-time 12 -A "$PROBE_UA" \
         -H "Authorization: Bearer $tok" "$url" 2>/dev/null) || json=""
     if [ -n "$json" ] && printf '%s' "$json" | jq -e '.data' >/dev/null 2>&1; then
-        mkdir -p "$(dirname "$MODEL_CACHE")" 2>/dev/null
-        printf '%s' "$json" > "$MODEL_CACHE.tmp.$$" 2>/dev/null &&
-            mv "$MODEL_CACHE.tmp.$$" "$MODEL_CACHE" 2>/dev/null
+        mkdir -p "$(dirname "$cache")" 2>/dev/null
+        printf '%s' "$json" > "$cache.tmp.$$" 2>/dev/null &&
+            mv "$cache.tmp.$$" "$cache" 2>/dev/null
     else
-        json=$(cat "$MODEL_CACHE" 2>/dev/null) || json=""
+        json=$(cat "$cache" 2>/dev/null) || json=""
         [ -n "$json" ] || return 1
     fi
 
@@ -306,11 +313,21 @@ resolve_models() {
 # argument handling
 case "${1:-}" in
     --help|-h)
-        sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
+        # Bounded by the comment block itself, not by a line number: the range
+        # silently truncated the help the first time the header grew.
+        awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"
         exit 0 ;;
     ""|status)
         printf 'bundles: %s\n' "$(list_bundles)"
         report
+        exit 0 ;;
+    --new)
+        # Adding a provider is agent research, not a registry write (see the
+        # /bundle skill). It is answered here rather than in the skill because
+        # the skill's `!`-substitution runs unconditionally, so this script is
+        # always called and would otherwise report a supported invocation as
+        # "no such bundle".
+        printf 'NEW BUNDLE — no switch was attempted.\n'
         exit 0 ;;
 esac
 

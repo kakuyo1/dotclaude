@@ -1,15 +1,20 @@
 ---
 name: bundle
-description: Switch which provider Claude Code talks to (deepseek or agentrouter) by rewriting HKCU\Environment. Also reports the active bundle, the base URL and whether a token is present.
-argument-hint: "[deepseek|agentrouter|status|--help]"
+description: Switch which provider Claude Code talks to by rewriting HKCU\Environment, or add a new provider with --new. Also reports the active bundle, the base URL and whether a token is present.
+argument-hint: "[<name>|status|--new|--help]"
 disable-model-invocation: true
 allowed-tools: Bash(bash ~/.claude/bundle-switch.sh:*)
 ---
 
 !`bash ~/.claude/bundle-switch.sh $ARGUMENTS`
 
-The text above is the script's stdout. Relay it to the user verbatim, then add
-at most one sentence of explanation.
+The text above is the script's stdout.
+
+If it starts with `NEW BUNDLE`, the user is adding a provider: read
+`references/new.md` and follow it, instead of relaying the stdout.
+
+Otherwise relay the stdout verbatim, then add at most one sentence of
+explanation.
 
 If it does not start with `/bundle <name>` (or say `bundles:`), the switch did
 NOT happen. Say so plainly. Never claim a provider switch that the output does
