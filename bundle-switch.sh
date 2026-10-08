@@ -118,12 +118,45 @@ report() {
 }
 
 # ---------------------------------------------------------------------------
-# agentrouter: resolve model names from the relay's public pricing endpoint.
-# The site's model list is documented as "dynamically adjusted", so nothing is
-# hardcoded beyond the family rules. Emits KEY=VALUE lines; omits any slot that
-# has no candidate rather than guessing a name (a wrong name yields 503 there).
+# agentrouter: resolve model names from the relay, then verify each one.
+#
+# The pricing endpoint lists a model as offered even while its budget pool is
+# exhausted, and this relay rations the claude models. An exhausted pool answers
+# HTTP 402 to every call and Claude Code retries it. Measured live: a session
+# whose ANTHROPIC_MODEL had been resolved to claude-opus-5 failed six times
+# before its first reply, while deepseek-v4-flash answered 200 straight away.
+# Listing is therefore not enough — every candidate gets a one-token probe and
+# only what actually answers is used.
+#
+# The probe must carry a Claude Code User-Agent: the relay fingerprints clients
+# and answers 401 "unauthorized client detected" to anything that does not look
+# like one. Without it every probe would look broken.
+#
+# Emits KEY=VALUE lines. A slot with no working candidate is omitted rather than
+# guessed. Returns 1 when the list cannot be obtained at all, 2 when nothing in
+# it works.
+PROBE_UA="claude-cli/2.1.293 (external, cli)"
+
+# The token is passed in, never taken from the environment: this script runs
+# inside Claude Code, whose own ANTHROPIC_AUTH_TOKEN still belongs to whatever
+# provider the session started on. Using that one probes the new provider with
+# the old provider's key, every probe 401s, and the switch is refused for a
+# reason that has nothing to do with the models.
+model_works() {
+    local base="$1" model="$2" tok="$3" code
+    code=$(curl -sS --max-time 25 -o /dev/null -w '%{http_code}' \
+        -X POST "${base}/v1/messages" \
+        -H "Authorization: Bearer $tok" \
+        -H "content-type: application/json" \
+        -H "anthropic-version: 2023-06-01" \
+        -A "$PROBE_UA" \
+        -d "{\"model\":\"$model\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+        2>/dev/null) || code=""
+    [ "$code" = "200" ]
+}
+
 resolve_models() {
-    local url="$1" want="$2" json
+    local url="$1" want="$2" base="$3" tok="$4" json
 
     json=$(curl -sS --max-time 10 "$url" 2>/dev/null) || json=""
     if [ -n "$json" ] && printf '%s' "$json" | jq -e '.data' >/dev/null 2>&1; then
@@ -135,29 +168,45 @@ resolve_models() {
         [ -n "$json" ] || return 1
     fi
 
-    local all opus sonnet mini
+    local all
     all=$(printf '%s' "$json" | jqr --arg t "$want" \
         '.data[]
          | select((.supported_endpoint_types // []) | index($t))
          | [.model_name, ((.model_ratio // 999) | tostring)] | @tsv' 2>/dev/null) || return 1
     [ -n "$all" ] || return 1
 
-    opus=$(printf '%s\n' "$all" | awk -F'\t' '$1 ~ /^claude-opus-/ {print $1}' | sort -V | tail -1)
-    sonnet=$(printf '%s\n' "$all" | awk -F'\t' -v skip="${opus:-__none__}" \
-        '$1 ~ /^claude-/ && $1 != skip {print $1}' | sort -V | tail -1)
-    mini=$(printf '%s\n' "$all" | awk -F'\t' '$1 !~ /^claude-/ {print $2"\t"$1}' \
-        | sort -k1,1n -k2,2 | head -1 | cut -f2)
+    # Preference order: claude models first (better quality), newest version
+    # first, then everything else cheapest first. Probing follows this order, so
+    # the first usable entry is also the preferred one.
+    local order m usable=""
+    order=$(
+        printf '%s\n' "$all" | awk -F'\t' '$1 ~ /^claude-/ {print $1}' | sort -Vr
+        printf '%s\n' "$all" | awk -F'\t' '$1 !~ /^claude-/ {print $2"\t"$1}' \
+            | sort -k1,1n -k2,2 | cut -f2
+    )
+    for m in $order; do
+        [ -n "$m" ] || continue
+        model_works "$base" "$m" "$tok" && usable="$usable $m"
+    done
+    # shellcheck disable=SC2086  # word splitting is the point here
+    usable=$(printf '%s\n' $usable)
+    [ -n "$usable" ] || return 2
 
-    [ -n "${opus:-}" ]   && printf 'ANTHROPIC_MODEL=%s\n' "$opus"
+    local primary opus sonnet mini
+    primary=$(printf '%s\n' $usable | head -1)
+    opus=$(printf '%s\n' $usable | awk '/^claude-opus-/' | sort -Vr | head -1)
+    sonnet=$(printf '%s\n' $usable | awk -v s="${opus:-__none__}" \
+        '/^claude-/ && $0 != s' | sort -Vr | head -1)
+    # non-claude entries are already cost-ordered inside $usable
+    mini=$(printf '%s\n' $usable | awk '!/^claude-/' | head -1)
+    [ -n "${mini:-}" ]   || mini="${sonnet:-}"
+    [ -n "${mini:-}" ]   || mini="$primary"
+
+    printf 'ANTHROPIC_MODEL=%s\n' "$primary"
     [ -n "${opus:-}" ]   && printf 'ANTHROPIC_DEFAULT_OPUS_MODEL=%s\n' "$opus"
     [ -n "${sonnet:-}" ] && printf 'ANTHROPIC_DEFAULT_SONNET_MODEL=%s\n' "$sonnet"
-    if [ -n "${mini:-}" ]; then
-        printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s\n' "$mini"
-        printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s\n' "$mini"
-    elif [ -n "${sonnet:-}" ]; then
-        printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s\n' "$sonnet"
-        printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s\n' "$sonnet"
-    fi
+    printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s\n' "$mini"
+    printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s\n' "$mini"
     return 0
 }
 
@@ -206,11 +255,18 @@ jqr '.env | to_entries[] | "\(.key)=\(.value)"' "$prof" > "$plan" 2>/dev/null ||
 resolve_url=$(jqr '.resolveModels.from // empty' "$prof" 2>/dev/null)
 if [ -n "$resolve_url" ]; then
     want=$(jqr '.resolveModels.requiresEndpointType // "anthropic"' "$prof" 2>/dev/null)
-    if resolved=$(resolve_models "$resolve_url" "$want"); then
+    base=$(jqr '.env.ANTHROPIC_BASE_URL // empty' "$prof" 2>/dev/null)
+    resolved=$(resolve_models "$resolve_url" "$want" "$base" "$token")
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
         printf '%s\n' "$resolved" >> "$plan"
+    elif [ "$rc" -eq 2 ]; then
+        not_switched "no model behind $base answered a probe just now.
+This relay rations the claude models and answers 402 'Budget pool quota has been
+exhausted' while its pricing page still lists them, so listing is not proof of
+availability. Refusing to switch onto a model that cannot serve a request."
     else
-        not_switched "could not resolve models from $resolve_url (no network and no cache).
-Refusing to guess model names — a wrong name returns 503 无可用渠道 there."
+        not_switched "could not fetch the model list from $resolve_url (no network, no cache)."
     fi
 fi
 printf 'ANTHROPIC_AUTH_TOKEN=%s\n' "$token" >> "$plan"

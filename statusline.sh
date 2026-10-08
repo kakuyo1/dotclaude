@@ -115,19 +115,18 @@ fetch_balance() {
         jq -r '.balance_infos[0].total_balance // empty' 2>/dev/null || true
       ;;
     agentrouter)
-      # This relay publishes no balance endpoint. The OpenAI-compatible billing
-      # route below exists (it rejects a dummy key with new_api_error rather
-      # than 404), but its response shape and unit are UNVERIFIED.
-      # ponytail: written blind. New API counts quota in units of 500000/$1, so
-      # if this ever returns a `quota` integer it must be divided before it is
-      # rendered as a currency amount. Compare once against the web dashboard
-      # before trusting any number here; until then the badge is the honest
-      # output.
-      curl -sS --max-time 5 \
-        -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
-        https://agentrouter.org/v1/dashboard/billing/subscription 2>/dev/null |
-        jq -r '(.hard_limit_usd // .soft_limit_usd // .total_available // empty)
-               | if type == "number" then tostring else empty end' 2>/dev/null || true
+      # No balance is obtainable with an API key here. Measured against the
+      # live relay:
+      #   /v1/dashboard/billing/subscription returns
+      #     {"soft_limit_usd":100000000,"hard_limit_usd":100000000,
+      #      "system_hard_limit_usd":100000000}
+      #   — 100000000 is New API's "no limit" sentinel, not a balance. Rendering
+      #   it produced a literal $100000000 on the status line.
+      #   /v1/dashboard/billing/usage returns only total_usage (spend so far),
+      #   and the real per-account quota sits behind /api/user/self, which
+      #   rejects an sk- key and wants a browser session token.
+      # So there is nothing honest to render: return nothing and let the badge
+      # fallback name the provider.
       ;;
   esac
 }

@@ -229,13 +229,14 @@
     }
   },
   "effortLevel": "xhigh",
-  "autoMemoryEnabled": true,
-  "skipDangerousModePermissionPrompt": true,
-  "theme": "dark-ansi",
-  "autoCompactEnabled": true,
   "modelSettings": {
     "deepseek-flash": {
       "effortLevel": "high"
     }
-  }
+  },
+  "autoMemoryEnabled": true,
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark-ansi",
+  "autoCompactEnabled": true,
+  "model": "haiku"
 }
