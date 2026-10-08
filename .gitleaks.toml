@@ -1,0 +1,31 @@
+# Secret-scanning rules for the dotclaude dotfiles repo.
+#
+# Used by two consumers:
+#   .githooks/pre-commit               — scans the staged diff (tracked content only)
+#   .github/workflows/secret-scan.yml  — scans the full commit history
+#
+# Baseline measured 2026-10-08 with gitleaks 8.30.1:
+#   tracked tree ............. 0 findings
+#   full history (60 commits)  4 findings, all one and the same false positive (see below)
+#   untracked working tree ... 458 findings, every one inside a gitignored path
+#                              (projects/, file-history/, plugins/, .venv/,
+#                              settings.local.json). Never committed, so neither
+#                              git-based scan above can ever see them.
+
+[extend]
+useDefault = true
+
+# The single measured false positive.
+#
+# skills/qt-figma-token-extraction/SKILL.md documented the Figma API with curl
+# examples whose X-Figma-Token header value was the literal string YOUR_TOKEN —
+# 10 characters, no figd_ prefix. A real Figma PAT is figd_ plus 40 characters.
+# The file is deleted from the working tree but still present in history, so the
+# CI history scan reports it on every run.
+#
+# Scoped by path AND value: a genuine secret later committed under that path
+# would still be caught.
+[[allowlists]]
+description = "Figma API doc example used the literal placeholder YOUR_TOKEN"
+paths = ['''skills/qt-figma-token-extraction/SKILL\.md$''']
+regexes = ['''YOUR_TOKEN''']

@@ -1,0 +1,81 @@
+#!/usr/bin/bash
+# Secret-scanning gate for this dotfiles repo.
+#
+# Tracked at .githooks/pre-commit; activated per machine with:
+#     git config --local core.hooksPath .githooks      (or: bash setup.sh)
+#
+# Two independent checks:
+#   1. refuse newly-staged paths that .gitignore excludes
+#   2. gitleaks over the staged diff
+#
+# Emergency bypass: git commit --no-verify
+#   The CI workflow (.github/workflows/secret-scan.yml) still scans the full
+#   history on push, so a bypass is caught before it can be relied on.
+#
+# Fails CLOSED: a missing or erroring scanner blocks the commit. That is
+# deliberate — settings.json runs with bypassPermissions, so no confirmation
+# dialog stands between an agent and a commit. A gate that silently passes
+# when the scanner is absent would be no gate at all.
+
+set -uo pipefail
+
+root=$(git rev-parse --show-toplevel) || exit 0
+cd "$root" || exit 0
+
+die() { printf '\n[secret-gate] %s\n\n' "$1" >&2; exit 1; }
+
+# ---- 1. refuse newly-staged paths that .gitignore excludes ---------------
+# Catches `git add -f settings.local.json` — the one move that defeats both
+# the repo .gitignore entry and the global **/.claude/settings.local.json.
+#
+# --diff-filter=A limits this to newly added paths, so a file that is already
+# tracked is never blocked even if an ignore rule later comes to cover it.
+# --no-index is required: without it, a force-added path is already in the
+# index and git reports it as "not ignored" — the exact case this guards.
+added=$(git diff --cached --name-only --diff-filter=A)
+if [ -n "$added" ]; then
+    blocked=$(printf '%s\n' "$added" | git check-ignore --stdin --no-index) || true
+    if [ -n "$blocked" ]; then
+        die "these staged paths are excluded by .gitignore:
+$(printf '%s\n' "$blocked" | sed 's/^/  /')
+Unstage them:
+  git restore --staged <path>
+If one genuinely must be tracked, change the .gitignore rule rather than
+reaching for 'git add -f'."
+    fi
+fi
+
+# ---- 2. gitleaks over the staged diff (index vs HEAD) -------------------
+# --staged is load-bearing. Plain `--pre-commit` diffs the working tree
+# against the index, which would scan unstaged edits and miss what is
+# actually being committed.
+gl=$(command -v gitleaks 2>/dev/null) || gl=""
+if [ -z "$gl" ]; then
+    # $LOCALAPPDATA arrives in Windows form while $HOME is POSIX, so the
+    # winget fallbacks have to be converted before the glob can match.
+    lad=$(cygpath -u "${LOCALAPPDATA:-}" 2>/dev/null) || true
+    for c in "$HOME/bin/gitleaks.exe" \
+             "${lad}/Microsoft/WinGet/Links/gitleaks.exe" \
+             ${lad}/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_*/gitleaks.exe \
+             /c/ProgramData/chocolatey/bin/gitleaks.exe; do
+        [ -n "$c" ] && [ -x "$c" ] && { gl=$c; break; }
+    done
+fi
+[ -n "$gl" ] || die "gitleaks is not installed — commit blocked (fail-closed).
+Install, no admin required:
+  cd \"\$HOME/bin\" && curl -fLO https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip && unzip -o gitleaks_8.30.1_windows_x64.zip gitleaks.exe
+Or: winget install --id Gitleaks.Gitleaks --exact --accept-package-agreements --accept-source-agreements
+    (portable zip, no elevation; open a new shell afterwards)
+Emergency bypass: git commit --no-verify"
+
+out=$("$gl" git --staged --redact -v --no-banner --config .gitleaks.toml . 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    die "gitleaks rejected this commit (exit $rc):
+$out
+If this is a real secret: remove it, then ROTATE the credential — rewriting
+history does not un-leak a token that has already been pushed.
+If it is a false positive: add a scoped entry to .gitleaks.toml (path AND
+value), do not reach for --no-verify."
+fi
+exit 0

@@ -46,3 +46,15 @@ skills/scrapling/.venv/
 skills/casetomanualrecord
 
 CLAUDE.local.md
+
+# runtime logs / append-only event streams (no tracked file matches today)
+*.log
+*.jsonl
+
+# Claude Code runtime dirs, siblings of sessions/ projects/ file-history/
+todos/
+statsig/
+dev-mods/
+
+# machine-specific overrides (settings.local.json, CLAUDE.local.md, ...)
+*.local.*
