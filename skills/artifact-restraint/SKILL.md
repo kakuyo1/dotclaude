@@ -46,5 +46,5 @@ dimension and never licenses unsupported facts. Keep mandatory accessibility,
 safety, legal, and output-format requirements.
 
 Apply this policy to artifact content, not implementation completeness, tests,
-evidence, or ordinary collaboration. Let `$writing-as-human` govern requested
+evidence, or ordinary collaboration. Let `$humanizer` govern requested
 voice and `$visual-qa` verify rendered output.
