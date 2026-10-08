@@ -7,5 +7,9 @@
   "resolveModels": {
     "from": "https://agentrouter.org/api/pricing",
     "requiresEndpointType": "anthropic"
+  },
+  "contextSuffixes": {
+    "deepseek-v4-flash": "[1m]"
   }
 }
+

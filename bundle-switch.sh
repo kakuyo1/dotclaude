@@ -156,7 +156,7 @@ model_works() {
 }
 
 resolve_models() {
-    local url="$1" want="$2" base="$3" tok="$4" json
+    local url="$1" want="$2" base="$3" tok="$4" prof="$5" json
 
     json=$(curl -sS --max-time 10 "$url" 2>/dev/null) || json=""
     if [ -n "$json" ] && printf '%s' "$json" | jq -e '.data' >/dev/null 2>&1; then
@@ -202,11 +202,20 @@ resolve_models() {
     [ -n "${mini:-}" ]   || mini="${sonnet:-}"
     [ -n "${mini:-}" ]   || mini="$primary"
 
-    printf 'ANTHROPIC_MODEL=%s\n' "$primary"
-    [ -n "${opus:-}" ]   && printf 'ANTHROPIC_DEFAULT_OPUS_MODEL=%s\n' "$opus"
-    [ -n "${sonnet:-}" ] && printf 'ANTHROPIC_DEFAULT_SONNET_MODEL=%s\n' "$sonnet"
-    printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s\n' "$mini"
-    printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s\n' "$mini"
+    # Per-model client-side context marker, from the bundle's contextSuffixes.
+    # It must NOT go on the wire: the relay answers 503 "无可用渠道" for the
+    # literal "deepseek-v4-flash[1m]" (measured). Claude Code strips it before
+    # the request — verified on this version, where ANTHROPIC_MODEL was
+    # deepseek-flash[1m] and every recorded message.model was deepseek-flash —
+    # and uses it only to size its own context window. So the probes above used
+    # the bare name and only the emitted value carries the suffix.
+    sfx() { jqr --arg m "$1" '.contextSuffixes[$m] // ""' "$prof"; }
+
+    printf 'ANTHROPIC_MODEL=%s%s\n' "$primary" "$(sfx "$primary")"
+    [ -n "${opus:-}" ]   && printf 'ANTHROPIC_DEFAULT_OPUS_MODEL=%s%s\n' "$opus" "$(sfx "$opus")"
+    [ -n "${sonnet:-}" ] && printf 'ANTHROPIC_DEFAULT_SONNET_MODEL=%s%s\n' "$sonnet" "$(sfx "$sonnet")"
+    printf 'ANTHROPIC_DEFAULT_HAIKU_MODEL=%s%s\n' "$mini" "$(sfx "$mini")"
+    printf 'CLAUDE_CODE_SUBAGENT_MODEL=%s%s\n' "$mini" "$(sfx "$mini")"
     return 0
 }
 
@@ -256,7 +265,7 @@ resolve_url=$(jqr '.resolveModels.from // empty' "$prof" 2>/dev/null)
 if [ -n "$resolve_url" ]; then
     want=$(jqr '.resolveModels.requiresEndpointType // "anthropic"' "$prof" 2>/dev/null)
     base=$(jqr '.env.ANTHROPIC_BASE_URL // empty' "$prof" 2>/dev/null)
-    resolved=$(resolve_models "$resolve_url" "$want" "$base" "$token")
+    resolved=$(resolve_models "$resolve_url" "$want" "$base" "$token" "$prof")
     rc=$?
     if [ "$rc" -eq 0 ]; then
         printf '%s\n' "$resolved" >> "$plan"
