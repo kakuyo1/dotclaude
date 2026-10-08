@@ -135,7 +135,23 @@ report() {
 # Emits KEY=VALUE lines. A slot with no working candidate is omitted rather than
 # guessed. Returns 1 when the list cannot be obtained at all, 2 when nothing in
 # it works.
-PROBE_UA="claude-cli/2.1.293 (external, cli)"
+# What the relay matches is the SHAPE claude-cli/<anything> (external, cli):
+# measured, versions 1.0.0 and 9.9.9 both pass, while dropping the
+# " (external, cli)" suffix or the "claude-cli/" prefix gives 401. The version
+# is read from the installed CLI anyway, so the header stays truthful across an
+# upgrade and cannot rot into a claim that is simply false — not because the
+# relay validates it.
+claude_cli_version() {
+    local v
+    # --version writes nothing: verified by comparing the mtimes of ~/.claude.json
+    # and settings.json across a call.
+    v=$(claude --version 2>/dev/null | awk 'NR==1 {print $1}')
+    case "$v" in
+        [0-9]*) printf '%s' "$v" ;;
+        *)      printf '0.0.0' ;;  # undetectable; the relay checks shape, not value
+    esac
+}
+PROBE_UA="claude-cli/$(claude_cli_version) (external, cli)"
 
 # The token is passed in, never taken from the environment: this script runs
 # inside Claude Code, whose own ANTHROPIC_AUTH_TOKEN still belongs to whatever
