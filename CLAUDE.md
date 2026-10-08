@@ -35,7 +35,7 @@
 ## Output Style
 
 - **Match the user's language** — Chinese by default; switch to English only when the user writes in English.
-- **Teaching overrides brevity** — Ponytail governs code, not talk. When the user is being taught (e.g. via the teach skill), give full explanations and citations; do not truncate to one-liners.
+- **Teaching overrides brevity** — Ponytail governs code, not talk. When the user is being taught, give full explanations and citations; do not truncate to one-liners.
 
 ---
 
