@@ -23,8 +23,6 @@
     "qt-cmake-project": "off",
     "qt-cpp-docs": "off",
     "qt-cpp-review": "off",
-    "qt-figma-component-generation": "off",
-    "qt-figma-token-extraction": "off",
     "qt-qml": "off",
     "qt-qml-docs": "off",
     "qt-qml-profiler": "off",
