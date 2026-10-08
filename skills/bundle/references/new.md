@@ -7,7 +7,17 @@ and only one of them is yours to write: `<name>.json` describes it, and
 The field semantics you are about to write live in the header of
 `~/.claude/bundle-switch.sh`. Read that first. This file says what to find out.
 
-## 1. Ask for the token file, never the token
+## 1. Ask which provider
+
+Ask which provider to add and for a link to its docs or API page, unless the
+user already named one in the command or in an earlier message. Nothing in this
+repo can supply that identity, and the site alone is enough to start.
+
+Then name the bundle after the provider's host: a short lowercase slug, because
+`bundle-switch.sh` rejects any name outside `a-z0-9-`. State the name you picked
+— it is the path the user is about to type.
+
+## 2. Ask for the token file, never the token
 
 Tell the user to create `~/.claude/bundles/<name>.local.json`, containing
 exactly:
@@ -21,7 +31,7 @@ needs the value.
 
 Everything after this point can proceed while the user does that.
 
-## 2. Find where the model list lives
+## 3. Find where the model list lives
 
 Pick the family, and the `resolveModels` block follows.
 
@@ -52,7 +62,7 @@ the switch slow — the other reason `/api/pricing` beats `/v1/models` when the
 instance does not gate it: its endpoint types filter the set before any probe
 runs.
 
-## 3. Set NO_PROXY by reachability
+## 4. Set NO_PROXY by reachability
 
 `env.NO_PROXY` names the hosts to reach directly, bypassing Clash. A domestic
 host belongs there (`api.deepseek.com` is in DeepSeek's); a foreign one must not
@@ -61,7 +71,7 @@ unreachable in the terminal the user actually runs. Keep
 `localhost,127.0.0.1,::1` in every bundle. One curl with and without
 `-x "$HTTP_PROXY"` tells you which side a host is on.
 
-## 4. Choose the models
+## 5. Choose the models
 
 `assignment`:
 
@@ -87,7 +97,7 @@ Add an entry only when you know the window and the list endpoint does not report
 it. When `contextWindowField` is set and the endpoint reports a window of 1M or
 more, the marker is derived and an entry would be redundant.
 
-## 5. Write the bundle
+## 6. Write the bundle
 
 `~/.claude/bundles/<name>.json`, shaped like an existing one: the `name` field
 and two `env` keys, `ANTHROPIC_BASE_URL` and `NO_PROXY`. Models do not go in
@@ -95,7 +105,7 @@ and two `env` keys, `ANTHROPIC_BASE_URL` and `NO_PROXY`. Models do not go in
 file is tracked in a public repo, which is the whole reason the key lives in the
 `.local.json` beside it.
 
-## 6. Activate it, and let the probes judge
+## 7. Activate it, and let the probes judge
 
 Once the token file exists, run `bash ~/.claude/bundle-switch.sh <name>`. This is
 a real switch, not a dry run, and it is also the only test that the config is
@@ -112,7 +122,7 @@ Fix and repeat. Then relay the resolved model names to the user and get their
 confirmation before calling it done: the resolved set is the bundle's real
 content, not the draft in the JSON.
 
-## 7. Give it a statusline badge
+## 8. Give it a statusline badge
 
 `statusline.sh` reads the provider from `ANTHROPIC_BASE_URL`, and while that
 match is empty the entire cost segment disappears — a new provider shows no
@@ -129,7 +139,7 @@ rendered as a literal `$100000000`, and the real quota sits behind
 `/api/user/self`, which wants a browser session token rather than an API key.
 With no honest number, leave the arm out and let the badge name the provider.
 
-## 8. Finish
+## 9. Finish
 
 Tell the user the token file is what is left to do if they have not made it, and
 that the switch takes effect only in a new terminal — restarting `claude` in the
