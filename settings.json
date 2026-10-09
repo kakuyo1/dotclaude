@@ -126,7 +126,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -168,7 +168,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -188,7 +188,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -209,7 +209,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -220,7 +220,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -231,7 +231,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -242,7 +242,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -253,7 +253,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -264,7 +264,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -275,7 +275,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -287,7 +287,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -299,7 +299,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
@@ -310,7 +310,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
+            "command": "C:/Users/wdmzs/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
           }
         ]
