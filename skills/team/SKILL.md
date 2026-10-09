@@ -35,7 +35,8 @@ here determines the role:
 The watcher never sends a message naming the role, because it does not track
 roles. Classify from the file path in the prompt.
 
-Both roles share the layout, the handover directory, and the boundaries below.
+Both roles share the layout, the handover directory, the language rule, and the
+boundaries below.
 
 ## Layout
 
@@ -67,6 +68,15 @@ commit under review.
 | `REVIEW.md` | planner | implementer |
 | `state.json` | watcher | watcher only — never edit by hand |
 | `watcher.log` | watcher | humans, for troubleshooting |
+
+## Language
+
+Every handover document and every message either agent sends the other is in English,
+and plain ASCII. The watcher types the review body into the implementer's terminal
+input, and that path carries ASCII intact while mangling anything else.
+
+`PLAN.md` and `IMPLEMENTATION.md` reach the other agent by path; `REVIEW.md` travels
+inline.
 
 ## Planner and reviewer
 
@@ -164,7 +174,10 @@ The plan covers:
 - **Scope** — what "done" means, in the user's terms.
 - **Files to touch** — the specific paths expected to change. Naming them turns a
   vague task into something checkable, and gives the reviewer a diff to compare
-  against.
+  against. Grep the whole repository for each path or symbol the change touches —
+  `installer/`, `scripts/`, `.githooks/` and the docs as well as the source tree. A
+  live file naming a path that no longer exists is a defect, and the include graph
+  does not show it.
 - **Interfaces and constraints** — signatures, data shapes, invariants. State
   these as rules, so the implementer can tell a violation from a preference.
 - **Forbidden** — what must not change: public API breaks, unrelated refactors,
@@ -186,11 +199,24 @@ surroundings beats a paraphrase of them.
 When the watcher supplies an `IMPLEMENTATION.md` path, review against the plan
 rather than against an independent first instinct of how the feature should look.
 
-Run `/code-review` for the automated pass, then read the diff directly:
+Run `/code-review` for the automated pass (it reads the reviewer's own checkout, so it
+sees nothing while the implementer's work is uncommitted), then read the diff directly:
 
 ```powershell
 git -C "<main-repo>" diff main...<slug>
 ```
+
+That three-dot diff compares commits, so it is empty when the branch carries none. Fall
+back to the worktree:
+
+```powershell
+git -C "<implementer-worktree>" status --short
+git -C "<implementer-worktree>" diff -M
+```
+
+Verify in the worktree rather than trusting the report's word: its build tree is
+disposable, so run the plan's own commands there, plus any gate the implementer's shell
+could not run.
 
 Automated findings are input, not the verdict. They miss design problems, unmet
 requirements, and code that is correct but wrong for this codebase. They also
@@ -333,6 +359,31 @@ phase of `watcher.ps1` is the one place to widen.
 **`.orca/` shows up as untracked in the main repo.** By design the handover
 directory lives inside the checkout. Add `.orca/` to the project's `.gitignore`,
 or a `git add -A` there stages handover documents.
+
+**The review lands in the implementer's input box as gibberish, or sits there unsent.**
+`REVIEW.md` is typed into that terminal inline, and non-ASCII does not survive the trip;
+the mangled text can also fail to submit, which leaves the phase at `implementing` while
+the implementer sits idle. The Language rule above is what prevents it. To recover:
+clear that input box by hand, then send a short path-only message.
+
+```powershell
+orca terminal send --terminal <handle> `
+  --text "The reviewer requested changes. Read <REVIEW.md path> and address every finding. Then write your report to <IMPLEMENTATION.md path> and stop." `
+  --enter --wait-submit 20 --json
+```
+
+Delivery comes back as `input_accepted` even when the provider cannot confirm it, so
+read the pane to check the message went.
+
+**A review request arrives for a report you have already read.** When the phase flips
+back to `implementing`, the watcher can re-read the `IMPLEMENTATION.md` still on disk
+and hand it over as if it were new. Compare the report's modification time with your
+`REVIEW.md`; when the report is older, the implementer is still working on the changes
+you asked for — write nothing and wait.
+
+**The implementer's worktree starts from `origin/main`.** A local commit that has not
+been pushed is absent from its tree, so a plan that leans on one asks for work the
+implementer cannot see.
 
 **State was lost mid-run.** Rerun the watcher with the same `-Feature` and
 `-HandoverDir`. It resumes from `state.json` instead of restarting the loop.
