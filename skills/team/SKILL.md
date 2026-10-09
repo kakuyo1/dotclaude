@@ -226,10 +226,16 @@ git -C "<implementer-worktree>" status --short
 git -C "<implementer-worktree>" diff -M
 ```
 
-When a commit is on the branch Orca created (`<git-user>/<slug>`), the three-dot form
-compares it against `main` — it compares commits, so it is empty until one exists.
-`/code-review` reads the reviewer's own checkout and sees nothing while the work is
-uncommitted, so run it once there is a commit.
+When a commit is on the branch Orca created, the three-dot form compares it against
+`main` — it compares commits, so it is empty until one exists. Orca names that branch
+`<git-user>/<slug>`, so the comparison is
+
+```powershell
+git -C "<implementer-worktree>" rev-list --left-right --count main...<git-user>/<slug>
+```
+
+The bare slug is not a branch name. `/code-review` reads the reviewer's own checkout and
+sees nothing while the work is uncommitted, so run it once there is a commit.
 
 Verify in the worktree rather than trusting the report's word: its build tree is
 disposable, so run the plan's own commands there, plus any gate the implementer's shell
