@@ -81,25 +81,48 @@ commit under review.
    orca worktree create --name <slug> --parent-worktree active --json
    ```
 
-3. Have the user open OpenCode in the new worktree and pick a model. This is a
-   blocking precondition, not a nicety: the watcher resolves the implementer by
-   agent identity scoped to `-ImplementerWorktreePath`, so a worktree holding only
-   a plain shell terminal is no different from an empty one, and the watcher exits
-   2 before it ever reads the plan. Ask in one message and name the worktree path;
-   an OpenCode pane already open on the main repo is a different worktree and does
-   not count.
-
-   Verify once it reports back, before starting the watcher:
+3. Launch the implementer yourself, on the free model, in the new worktree. Read
+   `result.worktree.id` and `result.worktree.path` out of the create JSON first —
+   the whole id, not the bare repo id.
 
    ```powershell
-   & 'C:\Users\admin\.claude\skills\team\scripts\watcher.ps1' `
+   orca terminal create `
+     --worktree id:<result.worktree.id> --title <slug> `
+     --shell powershell.exe `
+     --command "opencode --model opencode/space-bunny-free" --json
+   ```
+
+   This must be `orca terminal create`, not a hand-opened PowerShell window: Orca
+   only detects the OpenCode process as agent identity `opencode` inside a terminal
+   it manages, and the watcher resolves the implementer by that identity scoped to
+   `-ImplementerWorktreePath`. An OpenCode pane on the main repo is a different
+   worktree and does not count; the watcher exits 2 before it reads the plan.
+
+   `--model` is why this is a two-step create rather than `worktree create
+   --agent opencode`: the built-in launcher takes no per-call model argument.
+
+   Wait for the TUI to come up, then confirm both ends are wired, before starting
+   the watcher. Take the handle from `result.terminal.handle` in the create JSON,
+   or from `orca terminal list --worktree id:<result.worktree.id> --json` when the
+   create output omits it.
+
+   ```powershell
+   orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 90000 --json
+
+   & "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
      -Feature <slug> -HandoverDir <handover> `
      -ImplementerWorktreePath <implementer-worktree-path> `
      -ReviewerWorktreePath <main-repo> -Once
    ```
 
    Two `Resolved ... terminal:` lines mean both ends are wired. Exit code 2 means
-   the implementer agent is not visible in that worktree yet.
+   the implementer agent is not visible in that worktree yet. Orca registers the
+   agent identity a few seconds after the TUI is up, so wait 15 seconds and rerun
+   once before treating it as broken; if it still fails, read the pane with
+   `orca terminal read --terminal <handle> --json`.
+
+   A bare `worktree create` may also leave a fallback shell tab beside the agent.
+   It reports no agent identity, so the watcher ignores it.
 
 4. Create the handover directory and start the watcher in the background, before
    writing the plan. The watcher waits for `PLAN.md` regardless, but starting it
@@ -109,7 +132,7 @@ commit under review.
    $handover = "<main-repo>\.orca\team\<slug>"
    Start-Process powershell -WindowStyle Hidden -ArgumentList @(
      '-NoProfile', '-File',
-     'C:\Users\admin\.claude\skills\team\scripts\watcher.ps1',
+     "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1",
      '-Feature', '<slug>',
      '-HandoverDir', $handover,
      '-ImplementerWorktreePath', '<implementer-worktree-path>',
@@ -276,10 +299,23 @@ the watcher was told about.
 open. It selects the one in the watcher's own working directory and warns when
 that choice was ambiguous; `-ReviewerTerminal <handle>` pins it.
 
+**`watcher.log` repeats `No opencode agent is visible to Orca yet` before the plan
+goes out.** Expected, not a fault: Orca lists an agent in `worktree ps` only after
+it has run a turn, and the first turn is the plan. The warning stops on its own.
+
 **The watcher exits 2 with `No connected 'opencode' terminal in '<path>'`.** The
 implementer agent is not running in that worktree. A plain shell terminal sitting
 there does not satisfy the lookup, because a shell reports no agent identity at
-all. Open OpenCode in that worktree, pick a model, then rerun.
+all. Rerun the `orca terminal create` from step 3 against that worktree.
+
+**`orca` is not recognized.** Orca puts its CLI on `PATH` for the terminals it
+manages, so this means the watcher was started outside one. Launch it from the
+Orca-managed Claude Code pane.
+
+**`Unknown flag --model for command: terminal create`.** The `--command` value was
+split into separate arguments, so Orca parsed `--model` as one of its own flags.
+`Start-Process` joins `ArgumentList` with spaces and quotes nothing; quote any
+argument containing a space, as `Invoke-OrcaJson` in `watcher.ps1` does.
 
 **The plan arrives twice, or `watcher.log` reports `went idle without an
 implementation report` while the pane is still busy.** The implementer's turn was
@@ -304,7 +340,7 @@ or a `git add -A` there stages handover documents.
 **Verify the wiring without sending anything:**
 
 ```powershell
-& 'C:\Users\admin\.claude\skills\team\scripts\watcher.ps1' `
+& "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
   -Feature <slug> -HandoverDir <dir> -ImplementerWorktreePath <path> `
   -ReviewerWorktreePath <main-repo> -Once
 ```
