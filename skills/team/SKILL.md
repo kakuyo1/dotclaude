@@ -79,6 +79,16 @@ Every prompt names its document by path instead of quoting it, which is also wha
 the text short enough to submit in one go. A path is one ASCII line that the reading
 agent resolves itself, in whatever encoding the file uses.
 
+## Permissions
+
+Both agents read outside the repository as a matter of course: the skill directory, the
+handover documents, Orca's own files. A question parked in a pane waits for whoever is
+looking at that pane, which may be nobody, and the loop is stalled until someone
+answers — so neither role asks about these. For the implementer this is a setting
+rather than a habit: OpenCode's `permission` block in `~/.config/opencode/opencode.jsonc`
+is where reads outside its worktree get pre-authorised. Set it once, in setup, instead
+of answering prompts run after run.
+
 ## Planner and reviewer
 
 ### Starting a run
@@ -173,6 +183,10 @@ first line, so keep the directive on its own line.
 The plan covers:
 
 - **Scope** — what "done" means, in the user's terms.
+- **Ordering** — a worktree that already holds uncommitted work (a previous feature's,
+  say) has it committed as the plan's first step, before any edit: review reads a diff,
+  and two features in one diff cannot be reviewed. Commits are the implementer's to
+  make, only when the plan or the user asks for one.
 - **Files to touch** — the specific paths expected to change. Naming them turns a
   vague task into something checkable, and gives the reviewer a diff to compare
   against. Grep the whole repository for each path or symbol the change touches —
@@ -182,12 +196,16 @@ The plan covers:
 - **Interfaces and constraints** — signatures, data shapes, invariants. State
   these as rules, so the implementer can tell a violation from a preference.
 - **Forbidden** — what must not change: public API breaks, unrelated refactors,
-  anything outside the file list, anything the user ruled out.
+  anything outside the file list, anything the user ruled out. Scope each exclusion
+  to the behaviour you mean to hold rather than to a path: a frozen file freezes its
+  comments too, and they go stale the moment the behaviour moves.
 - **Test commands** — the exact commands that prove the work, so the implementer
   runs the same checks the reviewer will look for. Confirm the machine can run
   them before making them a gate: a stale machine path in `config/paths.json`, a
   drive that no longer exists, turns the build into an acceptance criterion the
-  implementer can only report and not meet.
+  implementer can only report and not meet. A real application run is not one of
+  them — starting the app writes the operator's own profile, so it is optional
+  evidence to ask for, never an acceptance criterion.
 - **Acceptance criteria** — a checklist the implementer can verify before
   reporting done.
 
@@ -200,20 +218,18 @@ surroundings beats a paraphrase of them.
 When the watcher supplies an `IMPLEMENTATION.md` path, review against the plan
 rather than against an independent first instinct of how the feature should look.
 
-Run `/code-review` for the automated pass (it reads the reviewer's own checkout, so it
-sees nothing while the implementer's work is uncommitted), then read the diff directly:
-
-```powershell
-git -C "<main-repo>" diff main...<slug>
-```
-
-That three-dot diff compares commits, so it is empty when the branch carries none. Fall
-back to the worktree:
+The implementer commits only when the plan says so, which makes the worktree's own diff
+the subject:
 
 ```powershell
 git -C "<implementer-worktree>" status --short
 git -C "<implementer-worktree>" diff -M
 ```
+
+When a commit is on the branch Orca created (`<git-user>/<slug>`), the three-dot form
+compares it against `main` — it compares commits, so it is empty until one exists.
+`/code-review` reads the reviewer's own checkout and sees nothing while the work is
+uncommitted, so run it once there is a commit.
 
 Verify in the worktree rather than trusting the report's word: its build tree is
 disposable, so run the plan's own commands there, plus any gate the implementer's shell
@@ -387,6 +403,12 @@ before writing anything.
 **The implementer's worktree starts from `origin/main`.** A local commit that has not
 been pushed is absent from its tree, so a plan that leans on one asks for work the
 implementer cannot see.
+
+**A second feature on the same worktree.** Point a new `-Feature` slug and a new handover
+directory at the implementer worktree and its pane and nothing else has to move: the
+watcher resolves the implementer by worktree path. Rerunning the *approved* feature
+instead resumes at `approved` and exits 0 without sending anything. The branch is reused
+too, so the new plan's first step is usually to commit the previous feature's work.
 
 **State was lost mid-run.** Rerun the watcher with the same `-Feature` and
 `-HandoverDir`. It resumes from `state.json` instead of restarting the loop.

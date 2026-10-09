@@ -487,6 +487,10 @@ reviewer's checkout. Follow the plan's constraints and forbidden items exactly;
 where the plan and your own judgement disagree, say so in your report rather
 than silently deviating.
 
+Reading the team skill, this handover directory, and your own OpenCode config is
+part of the job: go ahead and read them, without stopping to ask for permission
+first.
+
 When the implementation is complete, write your report to:
   $script:ImplementationPath
 
@@ -506,12 +510,17 @@ The implementer for feature '$Feature' reports its work is complete.
   Implementation report: $script:ImplementationPath
   Feature worktree:     $ImplementerWorktreePath
 
-Review it from your own checkout ($ReviewerWorktreePath). Read the diff with:
+Review it from your own checkout ($ReviewerWorktreePath). The implementer commits
+only when the plan says so, so the subject is the worktree's own diff:
 
-  git -C "$ReviewerWorktreePath" diff main...$Feature
+  git -C "$ImplementerWorktreePath" status --short
+  git -C "$ImplementerWorktreePath" diff -M
 
-Run /code-review for the automated pass, then apply your own judgement on top of
-it — the automated findings are input, not the verdict.
+When a commit is on the branch Orca created for this feature, the three-dot form
+against main compares it; it compares commits, so it is empty until one exists.
+Run /code-review once there is a commit: it reads your own checkout, so it sees
+nothing while the work is uncommitted. Automated findings are input, not the
+verdict -- apply your own judgement on top of them.
 
 Write your review to:
   $script:ReviewPath
