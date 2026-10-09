@@ -14,12 +14,10 @@
   "skillOverrides": {
     "archify": "user-invocable-only",
     "claude-api": "user-invocable-only",
-    "deslop": "user-invocable-only",
     "fewer-permission-prompts": "user-invocable-only",
     "init": "user-invocable-only",
     "keybindings-help": "user-invocable-only",
     "security-review": "user-invocable-only",
-    "tldr": "user-invocable-only",
     "qt-cmake-project": "off",
     "qt-cpp-docs": "off",
     "qt-cpp-review": "off",
@@ -330,7 +328,6 @@
     "context7@claude-plugins-official": false,
     "impeccable@impeccable": false,
     "diagram-design@diagram-design": false,
-    "last30days@last30days-skill": false,
     "i-have-adhd@i-have-adhd": true
   },
   "extraKnownMarketplaces": {
