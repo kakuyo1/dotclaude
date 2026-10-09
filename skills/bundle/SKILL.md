@@ -3,7 +3,7 @@ name: bundle
 description: Switch which provider Claude Code talks to by rewriting HKCU\Environment, or add a new provider with --new. Also reports the active bundle, the base URL and whether a token is present.
 argument-hint: "[<name>|status|--new|--help]"
 disable-model-invocation: true
-allowed-tools: Bash(powershell -NoProfile -ExecutionPolicy Bypass -File ~/.claude/bundle-switch.ps1:*), Bash(bash ~/.claude/bundle-switch.sh:*)
+allowed-tools: Bash(powershell -NoProfile -ExecutionPolicy Bypass -File ~/.claude/bundle-switch.ps1:*), Bash(bash ~/.claude/bundle-switch.sh:*), Bash(bash ~/.claude/skills/bundle/scripts/bundle-recon.sh:*)
 ---
 
 !`powershell -NoProfile -ExecutionPolicy Bypass -File "$HOME\.claude\bundle-switch.ps1" $ARGUMENTS`
@@ -12,12 +12,15 @@ The text above is the script's stdout; you were invoked with `$ARGUMENTS`. The
 script consumes the arguments itself, so this line is the only place you see
 them.
 
-Platform: there are two ports of the same script. The embedded command above is
-the Windows one, `~/.claude/bundle-switch.ps1` (PowerShell + curl.exe; there is
-no usable bash). On WSL or Linux use the shell port instead — invoke
-`bash ~/.claude/bundle-switch.sh $ARGUMENTS` — which needs bash, jq and curl.
-Both read the same `~/.claude/bundles/` and differ only in toolchain, so the
-output and the rest of this file are identical.
+Platform: two ports of the same script exist, and the machine decides which one
+runs. The embedded command above is the Windows port,
+`~/.claude/bundle-switch.ps1`, which needs only PowerShell and curl.exe — what
+every Windows machine has. The shell port, `bash ~/.claude/bundle-switch.sh
+$ARGUMENTS`, needs bash, jq and curl: the norm on WSL and Linux, and present on
+some Windows machines but absent on others, which is why the Windows port stays
+the one to reach for when a shell is missing. Both read the same
+`~/.claude/bundles/` and print the same output, so the rest of this file holds
+either way.
 
 If that stdout starts with `NEW BUNDLE`, the user is adding a provider: read
 `references/new.md` and follow it, instead of relaying the stdout.
