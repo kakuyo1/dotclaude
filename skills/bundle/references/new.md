@@ -89,6 +89,17 @@ the `resolveModels` block.
   `contextWindowField` when the response reports a window. This is what a
   provider's own API exposes, and the fallback when `/api/pricing` is gated.
 
+Two headers decide which list you see, and a bare `curl` sends neither. The
+script fetches `from` with the probe UA — `PROBE_UA` in `bundle-switch.sh`,
+`$ProbeUA` in the `.ps1` — and with `Authorization: Bearer`. A provider may
+branch on them whole. Measured on OpenRouter: the Claude Code UA swapped a
+469-row priced catalog for a 10-row curated list, with different ids
+(`anthropic/…`, carrying their own `[1m]`), a different window field
+(`max_input_tokens`, and no `context_length` at all), and `?q=` and
+`?category=` silently stopped filtering. So call the endpoint the way the
+script will call it, then read the field names and re-test every filter you
+mean to lean on.
+
 `ANTHROPIC_BASE_URL` is whatever the provider's docs call its Anthropic
 endpoint. Sometimes that carries a path and sometimes it is the bare origin,
 depending on where the provider hangs its Anthropic-compatible route; the docs
@@ -103,8 +114,11 @@ be configured by this flow at all.
 
 Two properties of the script shape what you choose. The list fetch sends
 `Authorization: Bearer`, so `from` must accept the key as a Bearer token. And
-every candidate is probed one at a time, so a list of hundreds of models makes
-the switch slow — the other reason `/api/pricing` beats `/v1/models` when the
+every candidate is probed one at a time with a real messages request, so the
+candidate count is what a switch costs: the loop probes them all rather than
+stopping at the first answer, and on a metered or free-tier provider that much
+of the allowance goes with it. A list of hundreds of models is therefore slow
+*and* expensive — the other reason `/api/pricing` beats `/v1/models` when the
 instance does not gate it: its endpoint types filter the set before any probe
 runs.
 
@@ -130,6 +144,11 @@ rows have no window field at all. Where present it cross-checks against reality
 (`gpt-oss-20b` says 131.1K; its window is 131072), but most rows carry no
 `tags`, and an absent window is not a 1M window. Never infer one.
 
+A free tier is sized for a chat client, not a coding agent, so check its
+allowance against the probe cost in step 4 before pinning one: OpenRouter's
+`:free` models publish 20 requests a minute and 50 a day below 10 lifetime
+credits, 1000 a day above, and every switch spends one request per candidate.
+
 `assignment`:
 
 - `"family"` when the provider offers claude-* models. They fill the
@@ -153,6 +172,12 @@ the provider's own list order, which it may reorder between requests, so a
 multi-match regex resolves to a different model run to run. Measured, `^deepseek`
 handed the slot to an 8B model and stepped over the intended one.
 
+Check the name against the list you just fetched before writing it. A `prefer`
+that matches nothing is not an error: the order falls back to cost and name,
+the switch resolves something regardless, and it prints that as a success.
+Measured on OpenRouter, a `prefer` matching none of the returned ids pinned the
+alphabetically first row — a paid model, in a bundle meant to be free.
+
 `requiresToolUse: true` makes a 200 insufficient by itself: the candidate must
 answer the probe with a `tool_use` block. Worth setting on a cheap open-model
 relay, where a listed model can answer politely and never call a tool (measured:
@@ -166,7 +191,10 @@ the maps in the tracked bundles are the existing ones. The suffix never reaches
 the wire; Claude Code strips it and uses it only to size its own context.
 Add an entry only when you know the window and the list endpoint does not report
 it. When `contextWindowField` is set and the endpoint reports a window of 1M or
-more, the marker is derived and an entry would be redundant.
+more, the marker is derived and an entry would be redundant. Two edges on that
+derivation: it needs at least 1048576, so an endpoint reporting exactly 1000000
+earns none; and an endpoint whose ids already carry `[1m]` must leave
+`contextWindowField` unset, or a window of 1048576 appends a second one.
 
 ## 7. Write the bundle
 
@@ -177,6 +205,13 @@ file is tracked in a public repo, which is the whole reason the key lives in the
 `.local.json` beside it.
 
 ## 8. Activate it, and let the probes judge
+
+Note which provider is active before touching anything — the script prints it
+when run with no argument — because switching that bundle back is the only
+rollback this flow has. If the provider turns out unusable, delete
+`~/.claude/bundles/<name>.json` — the `.local.json` beside it holds the user's
+key, so that one is theirs to remove — and switch back: the registry keeps the
+failed bundle's values until something overwrites them.
 
 Once the token file exists, run the switch — `bash ~/.claude/bundle-switch.sh
 <name>` on WSL/Linux, `powershell -File ~/.claude/bundle-switch.ps1 <name>` on
@@ -211,7 +246,8 @@ script reads that file.
 
 Fix and repeat. Then relay the resolved model names to the user and get their
 confirmation before calling it done: the resolved set is the bundle's real
-content, not the draft in the JSON.
+content, not the draft in the JSON, and a name you did not choose is a
+resolution that succeeded anyway rather than one that is right.
 
 ## 9. Give it a statusline badge
 
