@@ -5,6 +5,8 @@
 #   bash bundle-switch.sh status          same
 #   bash bundle-switch.sh --help          this text
 #   bash bundle-switch.sh --new           the add-a-provider flow, not a switch
+#   bash bundle-switch.sh --diag <name>   print each candidate's probe result
+#                                         without writing the registry
 #   bash bundle-switch.sh <name>          switch to that bundle
 #
 # Invoked from inside Claude Code as the `/bundle` skill.
@@ -126,8 +128,8 @@ report() {
 # whose ANTHROPIC_MODEL had been resolved to claude-opus-5 failed six API calls
 # before its first reply, because that relay rations the claude models and
 # answers 402 "Budget pool quota has been exhausted" while /api/pricing still
-# lists them. Every candidate therefore gets a one-token probe and only what
-# answers 200 is used.
+# lists them. Every candidate therefore gets one probe — a messages request
+# carrying a tools array — and only what answers it is used.
 #
 # resolveModels fields:
 #   from                  list endpoint. The token is always sent: required by
@@ -139,12 +141,17 @@ report() {
 #                         client-side [1m] marker, so the marker is derived from
 #                         the provider's own data rather than asserted.
 #   requiresEndpointType  optional. Keep only models offering that wire format.
+#   requiresToolUse       optional "true". A candidate must then answer the
+#                         probe with a tool_use block, not merely a 200.
 #   assignment            "family" -> opus / sonnet / mini slots (agentrouter)
 #                         "single" -> one model in every slot (DeepSeek)
 #   prefer                optional regex, "single" only — "family" has a fixed
 #                         order and ignores it. Matching models are probed
 #                         first, and if none match the ordering still yields a
 #                         candidate, so a rename degrades instead of breaking.
+#                         Anchor it on a single name: a regex matching several
+#                         resolves by the provider's list order, which the
+#                         provider may reorder between requests.
 #
 # Emits KEY=VALUE lines. A slot with no working candidate is omitted rather than
 # guessed. Returns 1 when the list cannot be obtained at all, 2 when nothing in
@@ -170,33 +177,71 @@ claude_cli_version() {
 }
 PROBE_UA="claude-cli/$(claude_cli_version) (external, cli)"
 
+# The only evidence the script has about a candidate. The request carries a tools
+# array and an unambiguous instruction to call the tool, so a 200 can be told
+# apart from a model that merely answers: measured on chengmo, 15 of 73 listed
+# models answered 200, but llama3.1-8B answered with plain text (stop_reason
+# end_turn) and never called the tool, and nemotron-3.5-content-safety is a
+# classifier rather than a chat model. Which of those counts as usable is the
+# bundle's call, via requiresToolUse.
+#
+# A 400 or 5xx is retried once: a relay routing through a shared pool refuses
+# transiently, measured as `分组 auto 下模型 X 的可用渠道不存在（retry）` minutes
+# after the same model had answered 200. A 402 (quota) or 403 (group) is final
+# and is not retried.
+#
 # The token is passed in, never taken from the environment: this script runs
 # inside Claude Code, whose own ANTHROPIC_AUTH_TOKEN still belongs to whatever
 # provider the session started on. Using that one probes the new provider with
 # the old provider's key, every probe 401s, and the switch is refused for a
 # reason that has nothing to do with the models.
-model_works() {
-    local base="$1" model="$2" tok="$3" code
-    code=$(curl -sS --max-time 25 -o /dev/null -w '%{http_code}' \
-        -X POST "${base}/v1/messages" \
-        -H "Authorization: Bearer $tok" \
-        -H "content-type: application/json" \
-        -H "anthropic-version: 2023-06-01" \
-        -A "$PROBE_UA" \
-        -d "{\"model\":\"$model\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
-        2>/dev/null) || code=""
-    [ "$code" = "200" ]
+#
+# Prints "<code>\t<1|0 has tool_use>\t<body head>" on stdout.
+probe_model() {
+    local base="$1" model="$2" tok="$3"
+    local body resp code tu="0" attempt=0
+    body=$(printf '{"model":"%s","max_tokens":256,"tools":[{"name":"get_weather","description":"Get the current weather for a city.","input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}],"messages":[{"role":"user","content":"What is the weather in Paris? Call the get_weather tool."}]}' "$model")
+    resp=$(mktemp) || return 0
+    while :; do
+        attempt=$((attempt+1))
+        code=$(curl -sS --max-time 30 -o "$resp" -w '%{http_code}' \
+            -X POST "${base}/v1/messages" \
+            -H "Authorization: Bearer $tok" \
+            -H "content-type: application/json" \
+            -H "anthropic-version: 2023-06-01" \
+            -A "$PROBE_UA" \
+            -d "$body" 2>/dev/null) || code=""
+        case "$code" in
+            400|5[0-9][0-9]) [ "$attempt" -lt 2 ] || break ;;
+            *) break ;;
+        esac
+    done
+    if [ "$code" = "200" ] &&
+       jq -e '[(.content // [])[] | .type] | index("tool_use")' "$resp" >/dev/null 2>&1; then
+        tu="1"
+    fi
+    printf '%s\t%s\t%s\n' "${code:-000}" "$tu" \
+        "$(tr -s '[:space:]' ' ' < "$resp" | cut -c1-160)"
+    rm -f "$resp"
 }
 
 resolve_models() {
     local prof="$1" base="$2" tok="$3" json
-    local url idf ratiof cwf ep assign prefer
+    local url idf ratiof cwf ep assign prefer rt
 
     # Cached per bundle. A single shared file served one provider's list to
     # another provider's probe whenever a fetch failed, and the failure it
     # produced — every candidate rejected — reads as a quota problem rather
     # than a cache mixup.
     local cache="/tmp/claude-${UID}-state/$(basename "$prof" .json)-models.cache.json"
+
+    # Why the resolution gave up, carried out to the caller's message. A
+    # variable cannot do it: the caller runs this function in a command
+    # substitution, so anything set here dies with the subshell.
+    local state="${cache%/*}"
+    local notefile="$state/$(basename "$prof" .json)-lastfail.txt"
+    mkdir -p "$state" 2>/dev/null
+    : > "$notefile" 2>/dev/null
 
     url=$(jqr '.resolveModels.from // empty' "$prof")
     [ -n "$url" ] || return 1
@@ -206,16 +251,27 @@ resolve_models() {
     ep=$(jqr '.resolveModels.requiresEndpointType // ""' "$prof")
     assign=$(jqr '.resolveModels.assignment // "family"' "$prof")
     prefer=$(jqr '.resolveModels.prefer // ""' "$prof")
+    rt=$(jqr '.resolveModels.requiresToolUse // false' "$prof")
 
+    # curl's stderr is left in place rather than discarded, and its exit code is
+    # kept: "could not fetch" otherwise reads the same for an unresolvable host,
+    # a reset connection and a TLS failure, and curl separates them (6 / 7 / 35).
+    local curl_rc=0
     json=$(curl -sS --max-time 12 -A "$PROBE_UA" \
-        -H "Authorization: Bearer $tok" "$url" 2>/dev/null) || json=""
+        -H "Authorization: Bearer $tok" "$url") || curl_rc=$?
+    if [ "$curl_rc" -ne 0 ]; then
+        printf '%s' "curl exit $curl_rc" > "$notefile" 2>/dev/null
+        json=""
+    fi
     if [ -n "$json" ] && printf '%s' "$json" | jq -e '.data' >/dev/null 2>&1; then
-        mkdir -p "$(dirname "$cache")" 2>/dev/null
         printf '%s' "$json" > "$cache.tmp.$$" 2>/dev/null &&
             mv "$cache.tmp.$$" "$cache" 2>/dev/null
     else
         json=$(cat "$cache" 2>/dev/null) || json=""
-        [ -n "$json" ] || return 1
+        if [ -z "$json" ]; then
+            printf '%s' "no list and no cache" > "$notefile" 2>/dev/null
+            return 1
+        fi
     fi
 
     # one row per candidate: id <TAB> ratio <TAB> context_window
@@ -229,12 +285,18 @@ resolve_models() {
         | select($name != "")
         | [$name, (($m[$rf] // 999) | tostring), (($m[$cw] // 0) | tostring)]
         | @tsv' 2>/dev/null) || rows=""
-    [ -n "$rows" ] || return 1
+    if [ -z "$rows" ]; then
+        # The list arrived; the filter emptied it. This is NOT a fetch failure,
+        # and the two used to share return 1 and one message: on chengmo all 73
+        # rows declared only the openai endpoint type, so requiresEndpointType
+        # "anthropic" discarded every one and the switch blamed the network.
+        return 3
+    fi
 
     # Probe order. "family" puts claude models first (better quality), newest
     # version first, then everything else cheapest first. "single" is a plain
     # cost order with an optional preferred name hoisted to the front.
-    local order m usable=""
+    local order m usable="" probed=0 firstfail="" line pcode ptu psnip tfl
     if [ "$assign" = "single" ]; then
         order=$(printf '%s\n' "$rows" | sort -t$'\t' -k2,2n -k1,1 | cut -f1)
         if [ -n "$prefer" ]; then
@@ -251,11 +313,37 @@ resolve_models() {
     fi
     for m in $order; do
         [ -n "$m" ] || continue
-        model_works "$base" "$m" "$tok" && usable="$usable $m"
+        probed=$((probed+1))
+        line=$(probe_model "$base" "$m" "$tok")
+        pcode=$(printf '%s' "$line" | cut -f1)
+        ptu=$(printf '%s' "$line" | cut -f2)
+        psnip=$(printf '%s' "$line" | cut -f3-)
+        if [ "${DIAG:-0}" = "1" ]; then
+            # The refusal body goes to stderr with the code: the code alone
+            # cannot separate a 402 quota from a 403 group, and that is the
+            # whole reason to run a diagnostic.
+            tfl="False"; [ "$ptu" = "1" ] && tfl="True"
+            if [ "$pcode" = "200" ]; then
+                printf '%-6s tool=%-5s %s\n' "$pcode" "$tfl" "$m" >&2
+            else
+                printf '%-6s tool=%-5s %s  %s\n' "$pcode" "$tfl" "$m" "$psnip" >&2
+            fi
+        fi
+        if [ "$pcode" = "200" ] && { [ "$rt" != "true" ] || [ "$ptu" = "1" ]; }; then
+            usable="$usable $m"
+        elif [ -z "$firstfail" ]; then
+            # One refusal kept verbatim. It is the only thing that separates a
+            # rejected key from a dry pool from a wrong field name, and this
+            # message used to read only "nothing answered a probe".
+            firstfail="$m -> HTTP $pcode $psnip"
+        fi
     done
     # shellcheck disable=SC2086  # word splitting is the point here
     usable=$(printf '%s\n' $usable)
-    [ -n "$usable" ] || return 2
+    if [ -z "$usable" ]; then
+        printf '%s' "$probed candidates probed; first refusal: $firstfail" > "$notefile" 2>/dev/null
+        return 2
+    fi
 
     local primary
     primary=$(printf '%s\n' $usable | head -1)
@@ -331,6 +419,19 @@ case "${1:-}" in
         exit 0 ;;
 esac
 
+# --diag <name>: probe every candidate and print each result, writing nothing.
+# The probe needs the token, and only this script reads that file, so this is
+# the only way to see why a resolution picked what it picked.
+DIAG=0
+if [ "${1:-}" = "--diag" ]; then
+    if [ -z "${2:-}" ]; then
+        printf 'usage: bundle-switch.sh --diag <name>\n'
+        exit 0
+    fi
+    DIAG=1
+    shift
+fi
+
 name="$1"
 
 # the name becomes a path, so keep the charset strict
@@ -362,22 +463,44 @@ jqr '.env | to_entries[] | "\(.key)=\(.value)"' "$prof" > "$plan" 2>/dev/null ||
     not_switched "invalid JSON in $prof"
 
 resolve_url=$(jqr '.resolveModels.from // empty' "$prof" 2>/dev/null)
+notefile="/tmp/claude-${UID}-state/$(basename "$prof" .json)-lastfail.txt"
 if [ -n "$resolve_url" ]; then
     base=$(jqr '.env.ANTHROPIC_BASE_URL // empty' "$prof" 2>/dev/null)
     resolved=$(resolve_models "$prof" "$base" "$token")
     rc=$?
+    detail=$(cat "$notefile" 2>/dev/null) || detail=""
     if [ "$rc" -eq 0 ]; then
         printf '%s\n' "$resolved" >> "$plan"
     elif [ "$rc" -eq 2 ]; then
-        not_switched "no model behind $base answered a probe just now.
-The provider's list endpoint names models it cannot currently serve: agentrouter
-rations the claude models and answers 402 'Budget pool quota has been exhausted'
-while still listing them. Refusing to switch onto a model that cannot serve a
-request — retry once the pool refills."
+        msg="no model behind $base answered the probe."
+        [ -n "$detail" ] && msg="$msg
+$detail"
+        not_switched "$msg
+The list endpoint names models the provider cannot currently serve, and a relay
+routing through a shared pool also refuses transiently: a 5xx "no available
+channel for this model" was measured minutes after the same model had answered
+200. Retrying later can succeed against the same list."
+    elif [ "$rc" -eq 3 ]; then
+        ep_filter=$(jqr '.resolveModels.requiresEndpointType // ""' "$prof" 2>/dev/null)
+        not_switched "the list from $resolve_url arrived, but no row survived the
+resolveModels filter (requiresEndpointType \"$ep_filter\"). Every candidate was
+discarded before any probe ran — compare that value against what the endpoint
+actually publishes for supported_endpoint_types."
     else
-        not_switched "could not fetch the model list from $resolve_url (no network, no cache)."
+        msg="could not fetch the model list from $resolve_url."
+        [ -n "$detail" ] && msg="$msg $detail."
+        not_switched "$msg"
     fi
 fi
+
+# --diag stops here. $plan holds no token yet and the registry is untouched, so
+# the probe log printed while resolving is the whole output.
+if [ "$DIAG" = "1" ]; then
+    printf -- '--- diag %s (registry untouched) ---\n' "$name"
+    sed 's/^/  /' "$plan"
+    exit 0
+fi
+
 printf 'ANTHROPIC_AUTH_TOKEN=%s\n' "$token" >> "$plan"
 
 # ---------------------------------------------------------------------------

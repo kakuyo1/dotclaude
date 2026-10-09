@@ -4,6 +4,10 @@
 #   powershell -File bundle-switch.ps1 status     same
 #   powershell -File bundle-switch.ps1 --help     this text
 #   powershell -File bundle-switch.ps1 --new      the add-a-provider flow, not a switch
+#   powershell -File bundle-switch.ps1 --diag <name>
+#                                                 probe every candidate of one
+#                                                 bundle and print each result,
+#                                                 without writing the registry
 #   powershell -File bundle-switch.ps1 <name>     switch to that bundle
 #
 # Invoked from inside the /bundle skill. This port replaces bash+jq with the
@@ -168,37 +172,81 @@ function Get-ClaudeCliVersion {
 # not look like one. It matches the SHAPE claude-cli/<anything> (external, cli).
 $script:ProbeUA = 'claude-cli/' + (Get-ClaudeCliVersion) + ' (external, cli)'
 
-# One-token probe. The token is passed in, never taken from the environment:
-# this script runs inside Claude Code, whose own ANTHROPIC_AUTH_TOKEN still
-# belongs to the session's provider and would 401 against the new one.
-function Test-ModelWorks([string]$Base, [string]$Model, [string]$Token) {
+# The only evidence the script has about a candidate. The request carries a
+# tools array and an unambiguous instruction to call the tool, so a 200 can be
+# told apart from a model that merely answers: measured on chengmo, 15 of 73
+# listed models answered 200, but llama3.1-8B answered with plain text
+# (stop_reason end_turn) and never called the tool, and nemotron-3.5-content-safety
+# is a classifier rather than a chat model. Which of those counts as usable is
+# the bundle's call, via requiresToolUse.
+#
+# A 400 or 5xx is retried once: a relay routing through a shared pool refuses
+# transiently, measured as `分组 auto 下模型 X 的可用渠道不存在（retry）` minutes
+# after the same model had answered 200.
+#
+# The token is passed in, never taken from the environment: this script runs
+# inside Claude Code, whose own ANTHROPIC_AUTH_TOKEN still belongs to the
+# session's provider and would 401 against the new one.
+#
+# Returns @{ code = '<http code>' ; toolUse = $bool ; snippet = '<body head>' }.
+function Invoke-ModelProbe([string]$Base, [string]$Model, [string]$Token) {
     # The JSON body goes through a temp file, not a -d argument. PowerShell 5.1's
     # native-argument quoting mangles a string containing embedded double quotes,
     # so curl received invalid JSON and answered 400 for every candidate.
-    $body = '{"model":"' + $Model + '","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}'
+    $body = '{"model":"' + $Model + '","max_tokens":256,' +
+            '"tools":[{"name":"get_weather","description":"Get the current weather for a city.",' +
+            '"input_schema":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}],' +
+            '"messages":[{"role":"user","content":"What is the weather in Paris? Call the get_weather tool."}]}'
     $tmp = [System.IO.Path]::GetTempFileName()
+    $out = [System.IO.Path]::GetTempFileName()
     $code = ''
+    $resp = ''
     try {
         Set-Content -LiteralPath $tmp -Value $body -Encoding Ascii -NoNewline
-        $code = & curl.exe -sS --max-time 25 -o NUL -w '%{http_code}' `
-            -X POST "$Base/v1/messages" `
-            -H "Authorization: Bearer $Token" `
-            -H 'content-type: application/json' `
-            -H 'anthropic-version: 2023-06-01' `
-            -A $script:ProbeUA `
-            --data-binary "@$tmp" 2>$null
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $code = & curl.exe -sS --max-time 30 -o $out -w '%{http_code}' `
+                -X POST "$Base/v1/messages" `
+                -H "Authorization: Bearer $Token" `
+                -H 'content-type: application/json' `
+                -H 'anthropic-version: 2023-06-01' `
+                -A $script:ProbeUA `
+                --data-binary "@$tmp" 2>$null
+            $code = ("$code").Trim()
+            if ($code -notmatch '^(400|5\d\d)$') { break }
+        }
+        if (Test-Path -LiteralPath $out) {
+            $resp = Get-Content -LiteralPath $out -Raw -Encoding UTF8
+        }
     } catch {
-        return $false
+        $code = ''
     } finally {
-        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tmp, $out -ErrorAction SilentlyContinue
     }
-    return (("$code").Trim() -eq '200')
+    if ($null -eq $resp) { $resp = '' }
+
+    $toolUse = $false
+    if ($code -eq '200') {
+        try {
+            $blocks = Get-Prop ($script:Json.DeserializeObject($resp)) 'content'
+            if ($null -ne $blocks) {
+                foreach ($blk in @($blocks)) {
+                    if ([string](Get-Prop $blk 'type') -eq 'tool_use') { $toolUse = $true; break }
+                }
+            }
+        } catch { }
+    }
+    $snip = ($resp -replace '\s+', ' ')
+    if ($snip.Length -gt 160) { $snip = $snip.Substring(0, 160) }
+    return @{ code = $code; toolUse = $toolUse; snippet = $snip }
 }
 
 # Model resolution, driven entirely by the bundle's resolveModels block. No
-# provider's model names are hardcoded; every candidate gets a one-token probe
-# and only what answers 200 is used (both endpoints list models they cannot
-# actually serve). Returns a hashtable: @{ rc = 0|1|2; lines = @('KEY=VALUE') }.
+# provider's model names are hardcoded; every candidate gets one probe and only
+# what answers it is used (both endpoints list models they cannot actually
+# serve). Field semantics live in the header of bundle-switch.sh.
+# Returns a hashtable: @{ rc = 0|1|2|3; lines = @('KEY=VALUE'); probed = <n>;
+# detail = '<why>' }. rc 3 is "the list arrived and the filter emptied it",
+# distinct from rc 1, "the list could not be obtained".
 function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token) {
     $rm = Get-Prop $Prof 'resolveModels'
     if ($null -eq $rm) { return @{ rc = 1; lines = @() } }
@@ -211,15 +259,37 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
     $ep     = [string](Get-Prop $rm 'requiresEndpointType')
     $assign = [string](Get-Prop $rm 'assignment'); if ([string]::IsNullOrEmpty($assign)) { $assign = 'family' }
     $prefer = [string](Get-Prop $rm 'prefer')
+    # Opt-in: require a tool_use answer rather than merely a 200. Off by default
+    # so an existing bundle keeps resolving exactly as it did.
+    $requireToolUse = ([string](Get-Prop $rm 'requiresToolUse') -eq 'true')
 
     $cacheDir = Join-Path $env:TEMP 'claude-bundle-state'
     $cache = Join-Path $cacheDir (([System.IO.Path]::GetFileNameWithoutExtension($ProfPath)) + '-models.cache.json')
 
+    # curl writes to a file instead of being captured through the pipeline:
+    # PowerShell 5.1 decodes a native command's stdout with the console code
+    # page, so a UTF-8 pricing payload came back with the closing quote of a
+    # mangled multi-byte run swallowed (…"NVIDIA英伟达"],… arrived as
+    # …"NVIDIA英伟?],…), and the serializer then rejected the whole body — which
+    # the caller reports as "could not fetch the model list (no network, no
+    # cache)". Reading the bytes back with -Encoding UTF8 keeps them out of the
+    # console's hands.
     $json = ''
+    $fetchNote = ''
+    $bodyPath = Join-Path $env:TEMP ('bundle-models-' + [guid]::NewGuid().ToString('n') + '.json')
     try {
-        $out = & curl.exe -sS --max-time 12 -A $script:ProbeUA -H "Authorization: Bearer $Token" $url 2>$null
-        if ($out) { $json = ($out -join "`n") }
-    } catch { $json = '' }
+        # curl's own stderr is left in place rather than discarded, and its exit
+        # code is kept: "could not fetch" otherwise reads the same for an
+        # unresolvable host, a reset connection and a TLS failure, and curl
+        # distinguishes them (6 / 7 / 35) without any mapping table.
+        & curl.exe -sS --max-time 12 -A $script:ProbeUA -H "Authorization: Bearer $Token" -o $bodyPath $url
+        if ($LASTEXITCODE -ne 0) { $fetchNote = 'curl exit ' + $LASTEXITCODE }
+        if (Test-Path -LiteralPath $bodyPath) {
+            $json = Get-Content -LiteralPath $bodyPath -Raw -Encoding UTF8
+        }
+    } catch { $json = '' } finally {
+        Remove-Item -LiteralPath $bodyPath -Force -ErrorAction SilentlyContinue
+    }
 
     $parsed = $null
     $hadData = $false
@@ -242,8 +312,8 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
         if (Test-Path -LiteralPath $cache) {
             try { $json = Get-Content -LiteralPath $cache -Raw } catch { $json = '' }
         }
-        if ([string]::IsNullOrEmpty($json)) { return @{ rc = 1; lines = @() } }
-        try { $parsed = $script:Json.DeserializeObject($json) } catch { return @{ rc = 1; lines = @() } }
+        if ([string]::IsNullOrEmpty($json)) { return @{ rc = 1; lines = @(); probed = 0; detail = $fetchNote } }
+        try { $parsed = $script:Json.DeserializeObject($json) } catch { return @{ rc = 1; lines = @(); probed = 0; detail = 'cached list unparseable' } }
     }
 
     $data = Get-Prop $parsed 'data'
@@ -277,7 +347,14 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
         }
         $rows.Add([pscustomobject]@{ name = $name; ratio = $ratio; cw = $cw })
     }
-    if ($rows.Count -eq 0) { return @{ rc = 1; lines = @() } }
+    if ($rows.Count -eq 0) {
+        # The list arrived; the filter emptied it. This is NOT the same as a
+        # fetch failure, and the two used to share rc=1 and one message: on
+        # chengmo all 73 rows declared only the openai endpoint type, so
+        # requiresEndpointType "anthropic" discarded every one and the switch
+        # blamed the network.
+        return @{ rc = 3; lines = @(); probed = 0; detail = '' }
+    }
 
     # Probe order. "family": claude models first (newest version first), then
     # everything else cheapest first. "single": plain cost order, with an
@@ -289,7 +366,11 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
                                    @{Expression = { $_.name };  Ascending = $true } |
             ForEach-Object { $_.name }
         if ($prefer -ne '') {
-            $prefNames = $rows | Where-Object { $_.name -match $prefer } | ForEach-Object { $_.name }
+            # -cmatch, not -match: -match is case-INsensitive here while the
+            # bash port's `awk '$1 ~ p'` is case-sensitive, so one bundle
+            # resolved differently per port. It also let `^deepseek` hoist
+            # DeepSeek-* along with the intended lowercase names.
+            $prefNames = $rows | Where-Object { $_.name -cmatch $prefer } | ForEach-Object { $_.name }
             $seen = @{}
             foreach ($n in (@($prefNames) + @($sorted))) {
                 if (-not $seen.ContainsKey($n)) { $seen[$n] = $true; $ordered.Add($n) }
@@ -313,11 +394,34 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
     }
 
     $usable = New-Object System.Collections.Generic.List[string]
+    $probed = 0
+    $firstFailure = ''
     foreach ($m in $ordered) {
         if ([string]::IsNullOrEmpty($m)) { continue }
-        if (Test-ModelWorks $Base $m $Token) { $usable.Add($m) }
+        $probed++
+        $p = Invoke-ModelProbe $Base $m $Token
+        if ($script:Diag) {
+            # The refusal body goes to stderr with the code: the code alone
+            # cannot separate a 402 quota from a 403 group, and that is the
+            # whole reason to run a diagnostic.
+            $note = ''
+            if ($p.code -ne '200' -and -not [string]::IsNullOrEmpty($p.snippet)) { $note = '  ' + $p.snippet }
+            [Console]::Error.WriteLine(('{0,-6} tool={1,-5} {2}{3}' -f $p.code, $p.toolUse, $m, $note))
+        }
+        $ok = ($p.code -eq '200') -and ((-not $requireToolUse) -or $p.toolUse)
+        if ($ok) {
+            $usable.Add($m)
+        } elseif ($firstFailure -eq '') {
+            # One refusal kept verbatim. It is the only thing that separates a
+            # rejected key from a dry pool from a wrong field name, and this
+            # message used to read only "nothing answered a probe".
+            $firstFailure = $m + ' -> HTTP ' + $p.code + ' ' + $p.snippet
+        }
     }
-    if ($usable.Count -eq 0) { return @{ rc = 2; lines = @() } }
+    if ($usable.Count -eq 0) {
+        return @{ rc = 2; lines = @(); probed = $probed;
+                  detail = ($probed.ToString() + ' candidates probed; first refusal: ' + $firstFailure) }
+    }
 
     $primary = $usable[0]
     $sfxMap = Get-Prop $Prof 'contextSuffixes'
@@ -374,6 +478,20 @@ try {
     $arg = ''
     if ($args.Count -ge 1) { $arg = [string]$args[0] }
 
+    # --diag <name>: probe every candidate and print each result, writing
+    # nothing. The probe needs the token, and only this script reads that file,
+    # so this is the only way to see why a resolution picked what it picked.
+    $diag = $false
+    if ($arg -eq '--diag') {
+        if ($args.Count -lt 2) {
+            Write-Output 'usage: bundle-switch.ps1 --diag <name>'
+            exit 0
+        }
+        $diag = $true
+        $arg = [string]$args[1]
+    }
+    $script:Diag = $diag
+
     if ($arg -eq '--help' -or $arg -eq '-h') {
 @'
 bundle-switch.ps1 - switch the provider Claude Code talks to.
@@ -382,6 +500,10 @@ bundle-switch.ps1 - switch the provider Claude Code talks to.
   powershell -File bundle-switch.ps1 status     same
   powershell -File bundle-switch.ps1 --help     this text
   powershell -File bundle-switch.ps1 --new      the add-a-provider flow, not a switch
+  powershell -File bundle-switch.ps1 --diag <name>
+                                                probe every candidate of one
+                                                bundle and print each result,
+                                                without writing the registry
   powershell -File bundle-switch.ps1 <name>     switch to that bundle
 
 After every switch, OPEN A NEW terminal before using it: the registry only
@@ -457,15 +579,34 @@ not enough.
                 }
             }
         } elseif ($res.rc -eq 2) {
-            Write-NotSwitched ('no model behind ' + $baseUrl + ' answered a probe just now.' + "`n" +
-                "The provider's list endpoint names models it cannot currently serve: agentrouter" + "`n" +
-                "rations the claude models and answers 402 'Budget pool quota has been exhausted'" + "`n" +
-                'while still listing them. Refusing to switch onto a model that cannot serve a' + "`n" +
-                'request ' + $script:EMDash + ' retry once the pool refills.')
+            $why = 'no model behind ' + $baseUrl + ' answered the probe.'
+            if (-not [string]::IsNullOrEmpty($res.detail)) { $why += "`n" + $res.detail }
+            Write-NotSwitched ($why + "`n" +
+                'The list endpoint names models the provider cannot currently serve, and a relay' + "`n" +
+                'routing through a shared pool also refuses transiently: a 5xx "no available' + "`n" +
+                'channel for this model" was measured minutes after the same model had answered' + "`n" +
+                '200. Retrying later can succeed against the same list.')
+        } elseif ($res.rc -eq 3) {
+            $epFilter = [string](Get-Prop (Get-Prop $prof 'resolveModels') 'requiresEndpointType')
+            Write-NotSwitched ('the list from ' + $rmFrom + ' arrived, but no row survived the' + "`n" +
+                'resolveModels filter (requiresEndpointType "' + $epFilter + '"). Every candidate' + "`n" +
+                'was discarded before any probe ran ' + $script:EMDash + ' compare that value against' + "`n" +
+                'what the endpoint actually publishes for supported_endpoint_types.')
         } else {
-            Write-NotSwitched ('could not fetch the model list from ' + $rmFrom + ' (no network, no cache).')
+            $why = 'could not fetch the model list from ' + $rmFrom + '.'
+            if (-not [string]::IsNullOrEmpty($res.detail)) { $why += ' ' + $res.detail + '.' }
+            Write-NotSwitched $why
         }
     }
+
+    # --diag stops here. $plan holds no token yet and the registry is untouched,
+    # so the probe log printed while resolving is the whole output.
+    if ($diag) {
+        Write-Output ('--- diag ' + $name + ' (registry untouched) ---')
+        foreach ($k in @($plan.Keys)) { Write-Output ('  ' + $k + '=' + [string]$plan[$k]) }
+        exit 0
+    }
+
     $plan['ANTHROPIC_AUTH_TOKEN'] = $token
 
     # Every key any bundle has ever set must be written this time, otherwise a
