@@ -72,11 +72,12 @@ commit under review.
 ## Language
 
 Every handover document and every message either agent sends the other is in English,
-and plain ASCII. The watcher types the review body into the implementer's terminal
-input, and that path carries ASCII intact while mangling anything else.
+and plain ASCII. The watcher types each prompt into the other terminal, and that path
+carries ASCII intact while mangling anything else.
 
-`PLAN.md` and `IMPLEMENTATION.md` reach the other agent by path; `REVIEW.md` travels
-inline.
+Every prompt names its document by path instead of quoting it, which is also what keeps
+the text short enough to submit in one go. A path is one ASCII line that the reading
+agent resolves itself, in whatever encoding the file uses.
 
 ## Planner and reviewer
 
@@ -310,7 +311,9 @@ polling or asking for confirmation only stalls the loop.
   implementer writes only code.
 - **A stalled phase is usually a permission prompt.** The watcher warns rather
   than exits, because stopping there strands the work. Answer the prompt in that
-  pane and the loop resumes.
+  pane and the loop resumes. A prompt the watcher could not confirm delivery of is
+  the other cause: it names the pane to check and retries a couple of times before
+  asking for a human.
 - **Rounds are capped** at 5 by default. Hitting the cap means a human should
   read the pattern: repeated findings usually indicate a flawed plan rather than
   an implementer needing more attempts.
@@ -360,26 +363,26 @@ phase of `watcher.ps1` is the one place to widen.
 directory lives inside the checkout. Add `.orca/` to the project's `.gitignore`,
 or a `git add -A` there stages handover documents.
 
-**The review lands in the implementer's input box as gibberish, or sits there unsent.**
-`REVIEW.md` is typed into that terminal inline, and non-ASCII does not survive the trip;
-the mangled text can also fail to submit, which leaves the phase at `implementing` while
-the implementer sits idle. The Language rule above is what prevents it. To recover:
-clear that input box by hand, then send a short path-only message.
+**A prompt is stuck in the other agent's input box, or arrives as gibberish.** `orca
+terminal send` answers `ok` for keystrokes that were accepted and never submitted, so
+the send's own result cannot tell you this happened. The watcher proves delivery by
+waiting for the implementer's turn to start and logging an ERROR when it does not. The
+rest only a human can do: read that pane.
 
 ```powershell
-orca terminal send --terminal <handle> `
-  --text "The reviewer requested changes. Read <REVIEW.md path> and address every finding. Then write your report to <IMPLEMENTATION.md path> and stop." `
-  --enter --wait-submit 20 --json
+orca terminal read --terminal <handle> --json
 ```
 
-Delivery comes back as `input_accepted` even when the provider cannot confirm it, so
-read the pane to check the message went.
+Text parked in the input box did not submit. Clear the box by hand; the watcher sends
+again on its next pass, and stops after a couple of attempts so it cannot spam a pane
+that is stuck. The Language rule above is what keeps this from starting.
 
-**A review request arrives for a report you have already read.** When the phase flips
-back to `implementing`, the watcher can re-read the `IMPLEMENTATION.md` still on disk
-and hand it over as if it were new. Compare the report's modification time with your
-`REVIEW.md`; when the report is older, the implementer is still working on the changes
-you asked for — write nothing and wait.
+**A review request arrives for a report you have already read.** The implementer ended
+its turn without rewriting `IMPLEMENTATION.md`, so the report predates the review it is
+meant to answer. The watcher tests exactly that — the report's write time against the
+review's — and re-sends the change request rather than asking for a review of stale
+work. If it reaches you anyway, the report is older than your review: read the pane
+before writing anything.
 
 **The implementer's worktree starts from `origin/main`.** A local commit that has not
 been pushed is absent from its tree, so a plan that leans on one asks for work the

@@ -15,6 +15,13 @@
     matters: if the watcher dies mid-run it can be restarted and will resume
     from the files without losing the conversation.
 
+    Delivery is the one thing it does own. `orca terminal send` answers `ok` for
+    keystrokes that never left the input box, so every prompt to the implementer
+    is followed by a check that its turn actually started; a prompt that did not
+    land is reported and retried rather than waited on forever. Prompts carry a
+    path, never the document body, because the body is what a non-ASCII byte or a
+    long paste can silently break.
+
     Handover directory layout (all files are the agents' own writing):
       PLAN.md            planner writes. First line must be the team-skill directive.
       IMPLEMENTATION.md  implementer writes when its turn completes.
@@ -103,6 +110,14 @@ $script:StatePath = Join-Path $HandoverDir 'state.json'
 $script:PlanPath           = Join-Path $HandoverDir 'PLAN.md'
 $script:ImplementationPath = Join-Path $HandoverDir 'IMPLEMENTATION.md'
 $script:ReviewPath         = Join-Path $HandoverDir 'REVIEW.md'
+
+# Per-process bookkeeping, deliberately outside state.json: a restart is a fresh
+# start for a retry budget and a warning throttle, and keeping them out leaves
+# state files written by an older watcher loadable.
+$script:resendCount   = 0
+$script:lastStallWarn = [datetime]::MinValue
+$script:verdictWarnedAt = [datetime]::MinValue
+$script:undeliveredWarnedAt = [datetime]::MinValue
 
 # The planner must open the plan with a directive that makes the implementer
 # load the team skill before touching anything. Verifying it here rather than
@@ -340,7 +355,59 @@ function Send-ToTerminal {
     if (-not $response.ok) {
         throw "terminal send to ${Label} failed: $($response | ConvertTo-Json -Depth 5 -Compress)"
     }
-    Write-Log -Level INFO -Message "Delivered to ${Label}."
+    # `ok` means the keystrokes were accepted, not that they were submitted:
+    # Orca answers `input was accepted, but this provider cannot report delivery`
+    # for a message that never leaves the input box. Delivery is therefore proven
+    # by the agent starting a turn, not by this response -- see
+    # Wait-ForImplementerToStart.
+    Write-Log -Level INFO -Message "Sent to ${Label} (acceptance only; delivery unconfirmed by Orca)."
+}
+
+<#
+.SYNOPSIS
+    Waits for the implementer to leave its resting state after a prompt.
+.DESCRIPTION
+    The only observable proof that a prompt reached the implementer is its turn
+    starting. When the send left the text sitting in the input box, the agent
+    stays `done` and nothing else in the loop would ever notice: the phase would
+    wait for a report that is never coming. A `null` state means Orca cannot see
+    the agent at all, which its own warning reports and is not evidence about
+    this send.
+#>
+function Wait-ForImplementerToStart {
+    param([int]$TimeoutSeconds = 45)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $impl = Get-ImplementerState
+        if ($null -eq $impl) { return $true }
+        if ($impl.State -ne 'done') { return $true }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+<#
+.SYNOPSIS
+    Reports a prompt that did not reach the implementer, with the manual recovery.
+.DESCRIPTION
+    One place for the wording, because three phases can hit it and the recovery
+    is the same each time. The watcher has no way to clear the other terminal's
+    input box, so a human has to; everything else the watcher retries itself.
+#>
+function Write-PromptNotDeliveredWarning {
+    param([Parameter(Mandatory)][string]$Reason)
+
+    # The condition persists until a human clears the box, so the report is
+    # throttled rather than logged on every poll.
+    if (((Get-Date) - $script:undeliveredWarnedAt).TotalSeconds -lt 60) { return }
+    $script:undeliveredWarnedAt = Get-Date
+
+    Write-Log -Level ERROR -Message (
+        "$Reason Inspect its pane with 'orca terminal read --terminal <handle> --json'. " +
+        'A prompt that did not submit is sitting in the input box: clear that box by hand, ' +
+        'then the watcher can send again.'
+    )
 }
 
 # --- handover documents ----------------------------------------------------
@@ -401,6 +468,7 @@ function Write-WatcherState {
 
     $State.phase          = $Phase
     $State.phaseEnteredAt = (Get-Date).ToString('o')
+    $script:resendCount   = 0
     $State | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $script:StatePath -Encoding utf8
     Write-Log -Level STATE -Message "phase -> $Phase (round $($State.round))"
 }
@@ -462,16 +530,18 @@ before this ships. Do not merge anything yourself.
 }
 
 function New-ChangesPrompt {
-    $verdict = (Get-Content -LiteralPath $script:ReviewPath -Raw)
+    # The review travels by path, not by body, exactly as the plan does. Pasting
+    # the file in was what broke: the text is typed into the other terminal, that
+    # path mangles anything but ASCII, and a mangled message can fail to submit
+    # while still coming back as a successful send. A path is one short ASCII
+    # line the implementer resolves itself, in whatever encoding the file uses.
     @"
 The reviewer requested changes on feature '$Feature'.
 
   Review: $script:ReviewPath
 
-$verdict
-
-Address every finding. Where you disagree with a finding, implement the rest and
-explain your objection in the updated report at:
+Read that file and address every finding. Where you disagree with a finding,
+implement the rest and explain your objection in the updated report at:
   $script:ImplementationPath
 
 Then stop and wait. The watcher will route your next report to the reviewer.
@@ -534,14 +604,18 @@ while ($true) {
     if ($phaseEntered -eq [datetime]::MinValue) { $phaseEntered = Get-Date }
     $idleMinutes = ((Get-Date) - $phaseEntered).TotalMinutes
 
-    if ($idleMinutes -gt $StallMinutes) {
+    if ($idleMinutes -gt $StallMinutes -and ((Get-Date) - $script:lastStallWarn).TotalMinutes -gt $StallMinutes) {
         # Deliberately a warning, not an exit: the usual cause is a permission
         # prompt waiting for a human, and stopping here would strand the work.
+        # The repeat is throttled in memory rather than by re-writing the phase:
+        # re-stamping phaseEnteredAt reset the clock the review guard reads, so an
+        # old REVIEW.md would look fresh again every time this fired.
+        $script:lastStallWarn = Get-Date
         Write-Log -Level WARN -Message (
             "No progress in phase '$($state.phase)' for $([int]$idleMinutes) min. " +
-            'If an agent is blocked on a permission prompt, answer it in that pane; the watcher will resume.'
+            'If an agent is blocked on a permission prompt, answer it in that pane; the watcher will ' +
+            'resume. If a prompt never reached its agent, the ERROR line saying so is the one to read.'
         )
-        Write-WatcherState -State $state -Phase $state.phase | Out-Null
     }
 
     switch ($state.phase) {
@@ -556,6 +630,14 @@ while ($true) {
                 continue
             }
             Send-ToTerminal -Handle $ImplementerTerminal -Text (New-PlanPrompt) -Label 'implementer'
+            if (-not (Wait-ForImplementerToStart)) {
+                # Stay in this phase: the next pass sends the plan again, and the
+                # round counter only moves once the implementer is really running,
+                # so a plan that never landed cannot be mistaken for progress.
+                Write-PromptNotDeliveredWarning -Reason 'The implementer stayed idle after the plan was sent.'
+                Start-Sleep -Seconds $PollSeconds
+                continue
+            }
             $state.round = 1
             Write-WatcherState -State $state -Phase 'implementing'
         }
@@ -571,16 +653,30 @@ while ($true) {
                 Start-Sleep -Seconds $PollSeconds
                 continue
             }
-            if (-not (Test-Path -LiteralPath $script:ImplementationPath)) {
-                Write-Log -Level WARN -Message (
-                    'Implementer went idle without an implementation report; ' +
-                    'the turn may have been interrupted. Re-sending the plan.'
+            # The report must be newer than the review that asked for it. Testing
+            # only for the file's existence let a change request that never reached
+            # the implementer hand the reviewer the *previous* round's report; the
+            # loop then sat in 'reviewing' on a verdict that would not change.
+            # Seen live, and it is why delivery is verified on the way out too.
+            $report = Get-Item -LiteralPath $script:ImplementationPath -ErrorAction SilentlyContinue
+            $review = Get-Item -LiteralPath $script:ReviewPath -ErrorAction SilentlyContinue
+            $reportAnswersThisRound =
+                ($null -ne $report) -and
+                (($null -eq $review) -or ($report.LastWriteTime -ge $review.LastWriteTime))
+
+            if (-not $reportAnswersThisRound) {
+                Write-PromptNotDeliveredWarning -Reason (
+                    "Round $($state.round): the implementer is idle and its report is older than the review."
                 )
-                $state.round = 0
-                Write-WatcherState -State $state -Phase 'planned'
+                if ($script:resendCount -lt 2) {
+                    $script:resendCount++
+                    $text = if ($null -ne $review) { New-ChangesPrompt } else { New-PlanPrompt }
+                    Send-ToTerminal -Handle $ImplementerTerminal -Text $text -Label 'implementer'
+                }
                 Start-Sleep -Seconds $PollSeconds
                 continue
             }
+
             Send-ToTerminal -Handle $ReviewerTerminal -Text (New-ReviewPrompt) -Label 'reviewer'
             $state.reviewRequested = $true
             Write-WatcherState -State $state -Phase 'reviewing'
@@ -589,22 +685,22 @@ while ($true) {
         'reviewing' {
             $verdict = Get-Verdict
             if (-not $verdict) {
-                # Guard against acting on a stale verdict from a previous round.
-                if ($state.lastVerdict) {
-                    Start-Sleep -Seconds $PollSeconds
-                    continue
-                }
-                Start-Sleep -Seconds $PollSeconds
-                continue
-            }
-            if ($verdict -eq $state.lastVerdict) {
                 Start-Sleep -Seconds $PollSeconds
                 continue
             }
 
-            $state.lastVerdict = $verdict
+            # The guard is REVIEW.md's write time against the phase entry, not the
+            # verdict text. Comparing text treated a second CHANGES REQUESTED round
+            # as a stale copy of the first and never delivered it -- a silent stall
+            # of the same shape as a message that failed to send.
+            $reviewFile = Get-Item -LiteralPath $script:ReviewPath -ErrorAction SilentlyContinue
+            if ($null -eq $reviewFile -or $reviewFile.LastWriteTime -le $phaseEntered) {
+                Start-Sleep -Seconds $PollSeconds
+                continue
+            }
 
             if ($verdict -like 'APPROVED*') {
+                $state.lastVerdict = $verdict
                 Write-Log -Level INFO -Message "Reviewer approved feature '$Feature' after $($state.round) round(s)."
                 Write-WatcherState -State $state -Phase 'approved'
                 Write-Log -Level INFO -Message 'Watcher exiting. Merging is the human''s call; nothing was merged or pushed.'
@@ -621,12 +717,28 @@ while ($true) {
                     exit 3
                 }
                 Send-ToTerminal -Handle $ImplementerTerminal -Text (New-ChangesPrompt) -Label 'implementer'
+                if (-not (Wait-ForImplementerToStart)) {
+                    # Leaving the verdict unrecorded is what makes the next pass send
+                    # this review again, instead of waiting on one that never arrived.
+                    Write-PromptNotDeliveredWarning -Reason 'The implementer stayed idle after the change request.'
+                    Start-Sleep -Seconds $PollSeconds
+                    continue
+                }
+                $state.lastVerdict = $verdict
                 $state.round++
                 Write-WatcherState -State $state -Phase 'implementing'
                 continue
             }
 
-            Write-Log -Level WARN -Message "Unrecognized verdict '$verdict'; expected APPROVED or CHANGES REQUESTED."
+            # A typo in the first line is a real error and should say so, but the
+            # file stays put until the reviewer fixes it, so the repeat is throttled
+            # rather than logged every poll.
+            if (((Get-Date) - $script:verdictWarnedAt).TotalSeconds -gt 60) {
+                $script:verdictWarnedAt = Get-Date
+                Write-Log -Level WARN -Message (
+                    "Unrecognized verdict '$verdict'; expected APPROVED or CHANGES REQUESTED. Still waiting."
+                )
+            }
             Start-Sleep -Seconds $PollSeconds
         }
 
