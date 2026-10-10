@@ -1,0 +1,20 @@
+{
+  "name": "chengmo",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.chengmo.cc.cd",
+    "NO_PROXY": "localhost,127.0.0.1,::1,api.chengmo.cc.cd"
+  },
+  "resolveModels": {
+    "from": "https://api.chengmo.cc.cd/api/pricing",
+    "idField": "model_name",
+    "ratioField": "model_ratio",
+    "requiresEndpointType": "openai",
+    "assignment": "single",
+    "prefer": "^(codestral-latest|cohere/north-mini-code:free)$",
+    "requiresToolUse": true
+  },
+  "opencode": {
+    "baseURL": "https://api.chengmo.cc.cd/v1",
+    "requiresEndpointType": "openai"
+  }
+}
