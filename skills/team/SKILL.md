@@ -1,15 +1,10 @@
 ---
 name: team
+disable-model-invocation: true
 description: >-
-  Contract for a two-agent feature workflow inside Orca, where one agent plans
-  and reviews and another implements, exchanging work through handover documents
-  and a watcher script until the reviewer approves. Use when the user types /team,
-  asks to 开 team / 组队 / 两个 agent 配合 / 让 claude 出方案让 space bunny 实现,
-  asks for a plan to be handed to another agent for implementation, asks for a
-  review loop between two agents, or describes a plan-implement-review cycle
-  across two Orca panes. Also use when a prompt points at PLAN.md and directs
-  following this skill, or points at IMPLEMENTATION.md and asks for a review —
-  either way this file defines which role the current agent is playing.
+  Two-agent feature workflow inside Orca: one agent plans and reviews, another
+  implements, exchanging work through handover documents and a watcher script
+  until the reviewer approves. Invoked by the user with /team.
 ---
 
 # Two-agent feature workflow
