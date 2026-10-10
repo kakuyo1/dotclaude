@@ -40,6 +40,7 @@ not a tool bug. Skip port probing — there is no port to probe.
 | 403 / other 4xx | network is fine; the target is blocking the client (switch impersonate / UA / direct link) |
 | `git push` → `Please make sure you have the correct access rights...` | usually a dropped SSH connection, not a key problem — test SSH (§3) before touching keys |
 | `ssh -T git@github.com` → `Connection closed by ... port 22/443` | GFW reset the SSH handshake (§3) |
+| `git push` / `clone` over https → `schannel: failed to receive handshake, SSL/TLS connection failed` | Windows TLS backend failing through the proxy, not a network block — §6 |
 
 Probe the proxy before suspecting the code.
 
@@ -51,7 +52,12 @@ switch to a direct link (transient failures are common) → if the user says the
 listens, ask whether their client runs in system-proxy or TUN mode.
 
 Exception: git push / ssh failures skip this loop. SSH takes no HTTP proxy env — go to §3. A curl
-verdict from `probe_proxy.sh` says nothing about SSH.
+verdict from `probe_proxy.sh` says nothing about SSH. Https git failures go to §6.
+
+`probe_proxy.sh` judges the port by one target (Wikipedia). A port can be live and still fail that
+target while GitHub works through it, so `exit 1 / No usable proxy port` does not prove the proxy
+is dead. When the probe fails but the port is listening, test the real target with
+`curl -x http://127.0.0.1:7890 -o /dev/null -w "%{http_code}\n" <real url>` before concluding anything.
 
 ## 1. Locate the local proxy
 
@@ -151,3 +157,19 @@ page.goto(f"file://{pathlib.Path(src).resolve()}")
 page.wait_for_load_state("networkidle")         # wait for webfonts and other assets
 page.locator("svg").first.screenshot(path=out, omit_background=True)
 ```
+
+## 6. git over https — schannel handshake fails through the proxy
+
+Symptom: `schannel: failed to receive handshake, SSL/TLS connection failed`, while
+`curl -x http://127.0.0.1:7890 https://github.com` returns 200. The proxy works; git's Windows TLS
+backend (schannel) is what breaks. Confirm with curl first, then switch git's TLS backend:
+
+```bash
+# one-off push / fetch, no permanent config change
+git -c http.proxy=http://127.0.0.1:7890 -c http.sslBackend=openssl push origin master
+```
+
+If the openssl backend is also absent, check `git version --build-options` for `openssl`. Making it
+permanent is `git config --global http.proxy` plus `http.sslBackend openssl`; ask before editing the
+global config. Note that `http.proxy` applies only to git, unlike the `https_proxy` env var which
+curl and pip also read.
