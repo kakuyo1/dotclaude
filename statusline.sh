@@ -131,6 +131,16 @@ fetch_balance() {
       # So there is nothing honest to render: return nothing and let the badge
       # fallback name the provider.
       ;;
+    traxnode)
+      # /api/user/self takes the long-lived system access token, not the sk- key
+      # (that gets 401). The token lives in the bundle's secret file under
+      # access_token, so the bundle switch never sees it. quota / 500000 is USD.
+      access_token=$(jq -r '.access_token // empty' "$HOME/.claude/bundles/traxnode.local.json" 2>/dev/null || true)
+      [[ -n "$access_token" ]] || return 0
+      curl -sS --max-time 5 -H "Authorization: $access_token" \
+        https://www.traxnode.com/api/user/self 2>/dev/null |
+        jq -r '.data.quota // empty | . / 500000 | . * 100 | round / 100' 2>/dev/null || true
+      ;;
   esac
 }
 
