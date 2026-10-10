@@ -1,2 +1,5 @@
 # 统一 LF 换行符:防止 CRLF 破坏 shebang / 字符串匹配型 hook(Windows 与 Linux 通用)
 * text=auto eol=lf
+
+# Orca 会把 settings.json 里的 hook 路径改写成本机绝对路径,提交前用 orca-hook filter 规范回 ~/.orca 路径
+settings.json filter=orca-hook
