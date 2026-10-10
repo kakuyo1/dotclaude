@@ -29,7 +29,7 @@ A bundle gets an opencode target by adding an `opencode` block to
 
 ## What a sync writes
 
-`scripts/opencode/bundle-switch.ps1 <name>` merges one provider entry into `~/.config/opencode/opencode.jsonc`:
+`~/.claude/skills/bundle/scripts/opencode/bundle-switch.ps1 <name>` merges one provider entry into `~/.config/opencode/opencode.jsonc`:
 
 - `provider.<name>`: `npm`, `name`, `options.baseURL`, and `models` with each id's
   `tool_call` flag from the probe.
@@ -53,8 +53,8 @@ for a provider that only opencode uses.
    `{"type": "api", "key": "<key>"}`. The name must match the bundle name exactly.
    Never open the file to read the key, and never ask for it in the chat.
 3. Add the `opencode` block to `bundles/<name>.json`.
-4. Run `scripts/opencode/bundle-switch.ps1 --diag <name>` and read the candidate list. It writes nothing.
-5. Run `scripts/opencode/bundle-switch.ps1 <name>` to sync. Report the models it lists. They are the real
+4. Run `~/.claude/skills/bundle/scripts/opencode/bundle-switch.ps1 --diag <name>` and read the candidate list. It writes nothing.
+5. Run `~/.claude/skills/bundle/scripts/opencode/bundle-switch.ps1 <name>` to sync. Report the models it lists. They are the real
    content, so get the user's confirmation before calling it done.
 6. Tell the user to restart opencode. It reads its config only at startup.
 

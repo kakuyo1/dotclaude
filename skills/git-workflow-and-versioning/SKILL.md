@@ -241,6 +241,11 @@ Automate this with git hooks:
 }
 ```
 
+## Pushing
+
+- Fetch and rebase onto the remote branch before pushing. A non-fast-forward rejection means the remote moved; integrate it, don't force-push.
+- A push that fails with `schannel` or SSL handshake errors is a network problem, not a git problem. Diagnose with `vpn-proxy-troubleshooting` before retrying.
+
 ## Handling Generated Files
 
 - **Commit generated files** only if the project expects them (e.g., `package-lock.json`, Prisma migrations)
