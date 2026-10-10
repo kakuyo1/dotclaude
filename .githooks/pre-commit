@@ -80,4 +80,19 @@ history does not un-leak a token that has already been pushed.
 If it is a false positive: add a scoped entry to .gitleaks.toml (path AND
 value), do not reach for --no-verify."
 fi
+
+# ---- 3. settings.json must not carry a machine-absolute Orca path --------
+# The orca-hook clean filter normally folds C:/Users/<you>/.orca/... back to
+# ~/.orca before the blob is ever written. This catches the case where the
+# driver is missing but the hook somehow is installed (e.g. the filter config
+# was lost while core.hooksPath survived), so a bad blob can never be pushed.
+# Evaluated on the STAGED blob, which is what actually lands in the commit.
+if git cat-file -p :settings.json 2>/dev/null |
+        grep -Eq '[A-Za-z]:/[^"]*/\.orca/agent-hooks'; then
+    die "staged settings.json contains a machine-absolute .orca path.
+The orca-hook filter should have normalized it to ~/.orca. Reinstall it:
+  bash setup.sh
+Then re-add: git add settings.json"
+fi
+
 exit 0
