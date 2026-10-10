@@ -1,0 +1,8 @@
+{
+  "name": "traxnode-image",
+  "opencode": {
+    "baseURL": "https://www.traxnode.com/v1",
+    "from": "https://www.traxnode.com/v1/models",
+    "idField": "id"
+  }
+}
