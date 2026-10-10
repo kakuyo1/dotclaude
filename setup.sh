@@ -16,6 +16,12 @@ chmod +x .githooks/pre-commit 2>/dev/null || true
 
 printf 'core.hooksPath = %s\n' "$(git config --local core.hooksPath)"
 
+# The opencode /bundle command is generated, not hand-edited: edit
+# skills/bundle/assets/bundle.command.md and re-run this (or any --opencode switch).
+mkdir -p "$HOME/.config/opencode/command"
+cp skills/bundle/assets/bundle.command.md "$HOME/.config/opencode/command/bundle.md"
+printf 'opencode /bundle command -> %s\n' "$HOME/.config/opencode/command/bundle.md"
+
 if command -v gitleaks >/dev/null 2>&1; then
     printf 'gitleaks       = %s\n' "$(gitleaks version)"
 else

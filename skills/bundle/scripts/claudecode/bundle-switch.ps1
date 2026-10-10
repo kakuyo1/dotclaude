@@ -10,7 +10,8 @@
 #                                                 without writing the registry
 #   powershell -File bundle-switch.ps1 <name>     switch to that bundle
 #
-# Invoked from inside the /bundle skill. This port replaces bash+jq with the
+# Invoked from inside the /bundle skill. The opencode side is
+# ..\opencode\bundle-switch.ps1, which shares no code with this file. This port replaces bash+jq with the
 # native Windows toolchain: System.Web.Script.Serialization for JSON, curl.exe
 # for HTTP, and [Environment]::SetEnvironmentVariable for the registry (it
 # broadcasts WM_SETTINGCHANGE, so a newly opened terminal picks the values up).
@@ -475,20 +476,21 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
 # main
 
 try {
+    $argList = @($args)
     $arg = ''
-    if ($args.Count -ge 1) { $arg = [string]$args[0] }
+    if ($argList.Count -ge 1) { $arg = [string]$argList[0] }
 
     # --diag <name>: probe every candidate and print each result, writing
     # nothing. The probe needs the token, and only this script reads that file,
     # so this is the only way to see why a resolution picked what it picked.
     $diag = $false
     if ($arg -eq '--diag') {
-        if ($args.Count -lt 2) {
+        if ($argList.Count -lt 2) {
             Write-Output 'usage: bundle-switch.ps1 --diag <name>'
             exit 0
         }
         $diag = $true
-        $arg = [string]$args[1]
+        $arg = [string]$argList[1]
     }
     $script:Diag = $diag
 
@@ -525,6 +527,7 @@ not enough.
     }
 
     $name = $arg
+    $script:Name = $name
 
     # the name becomes a path, so keep the charset strict
     if ($name -notmatch '^[a-z0-9-]+$') {

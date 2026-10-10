@@ -10,5 +10,8 @@
     "contextWindowField": "context_window",
     "assignment": "single",
     "prefer": "^deepseek-flash$"
+  },
+  "opencode": {
+    "baseURL": "https://api.deepseek.com/v1"
   }
 }
