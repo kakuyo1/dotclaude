@@ -1,15 +1,18 @@
-# Adding a provider
+# Adding a provider (Claude Code)
 
-Reached by `/bundle --new`. A provider is two files under `~/.claude/bundles/`,
+Reached by `/bundle --new` in Claude Code. opencode does not use this file: for
+the opencode target read `references/opencode.md`.
+
+A provider is two files under `~/.claude/bundles/`,
 and only one of them is yours to write: `<name>.json` describes it, and
 `<name>.local.json` holds the key and belongs to the user.
 
 The field semantics you are about to write live in the header of
-`~/.claude/bundle-switch.sh`. Read that first. This file says what to find out.
+`~/.claude/skills/bundle/scripts/claudecode/bundle-switch.sh`. Read that first. This file says what to find out.
 
 There are two ports of the script. On Windows the invocation is
-`powershell -File ~/.claude/bundle-switch.ps1 <name>`; on WSL and Linux it is
-`bash ~/.claude/bundle-switch.sh <name>`. Same script, same bundles, two
+`powershell -File ~/.claude/skills/bundle/scripts/claudecode/bundle-switch.ps1 <name>`; on WSL and Linux it is
+`bash ~/.claude/skills/bundle/scripts/claudecode/bundle-switch.sh <name>`. Same script, same bundles, two
 toolchains (PowerShell + curl.exe versus bash + jq + curl). Wherever this file
 names `bundle-switch.sh`, use the `.ps1` port on Windows.
 
@@ -44,7 +47,7 @@ so it works while the user is still creating the token file:
 
     bash ~/.claude/skills/bundle/scripts/bundle-recon.sh <base>
 
-It reports four facts, each answering something the model list cannot:
+It reports five facts, each answering something the model list cannot:
 
 - **fingerprint** — which relay software answers. `x-new-api-version` names New
   API outright; `x-oneapi-request-id` on its own says only one-api lineage, which
@@ -54,6 +57,9 @@ It reports four facts, each answering something the model list cannot:
   key-free call answers 401 when the route is there and only the key is missing,
   and 404 when there is no such route, in which case this flow cannot configure
   the relay however good its catalog looks.
+- **openai route** — the same test on `POST <base>/v1/chat/completions`, which
+  the opencode target needs (`references/opencode.md`). A relay can have one route
+  and not the other.
 - **instance status** — read `announcements` first: one instance said in plain
   text that it was a free relay which might stop carrying models, another that its
   Claude models are rationed in daily batches, which is where its 402s came from.
@@ -213,8 +219,8 @@ rollback this flow has. If the provider turns out unusable, delete
 key, so that one is theirs to remove — and switch back: the registry keeps the
 failed bundle's values until something overwrites them.
 
-Once the token file exists, run the switch — `bash ~/.claude/bundle-switch.sh
-<name>` on WSL/Linux, `powershell -File ~/.claude/bundle-switch.ps1 <name>` on
+Once the token file exists, run the switch — `bash ~/.claude/skills/bundle/scripts/claudecode/bundle-switch.sh
+<name>` on WSL/Linux, `powershell -File ~/.claude/skills/bundle/scripts/claudecode/bundle-switch.ps1 <name>` on
 Windows. This is a real switch, not a dry run, and it is also the only test that
 the config is right: it fetches the list, sends every candidate one real
 messages request carrying a tools array, and writes the registry only when

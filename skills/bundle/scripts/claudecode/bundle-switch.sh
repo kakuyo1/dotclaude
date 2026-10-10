@@ -9,7 +9,8 @@
 #                                         without writing the registry
 #   bash bundle-switch.sh <name>          switch to that bundle
 #
-# Invoked from inside Claude Code as the `/bundle` skill.
+# Invoked from inside Claude Code as the `/bundle` skill. The opencode side is
+# ../opencode/bundle-switch.sh, which shares no code with this file.
 #
 # ---------------------------------------------------------------------------
 # Why the registry, and not settings.json

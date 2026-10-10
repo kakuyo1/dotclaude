@@ -4,7 +4,7 @@
 #   bash bundle-recon.sh <base-url>
 #   bash bundle-recon.sh https://api.example.com
 #
-# The /bundle --new flow needs four facts before it can choose a list endpoint,
+# The /bundle --new flow needs five facts before it can choose a list endpoint,
 # and none of them is about the credential, so this sends no Authorization
 # header and reads no .local.json. Run it first; it answers:
 #
@@ -14,6 +14,9 @@
 #                   call separates "route exists, key missing" from "no such
 #                   route", and a relay with no Anthropic route cannot be
 #                   configured by this flow however good its catalog looks.
+#   openai route    the same test on POST <base>/v1/chat/completions, which the
+#                   opencode target uses. Needed only when the bundle has an
+#                   opencode block; a relay may have one route and not the other.
 #   catalog         what the instance publishes, grouped by endpoint type and by
 #                   group, and whether any row offers an anthropic endpoint type
 #                   at all. A count of zero there is normal, not fatal: measured,
@@ -23,7 +26,7 @@
 #                   which is exactly what the bundle's NO_PROXY encodes.
 #
 # Read-only: it writes no bundle and no registry entry. Needs bash, curl and jq.
-# Where bash is unavailable (some Windows machines), references/new.md step 3
+# Where bash is unavailable (some Windows machines), references/claudecode.md step 3
 # names the same requests to make by hand.
 
 set -uo pipefail
@@ -95,6 +98,20 @@ case "$code" in
              printf '         (a relay with no Anthropic route cannot be configured here)\n' ;;
     "")      printf '  no response\n' ;;
     *)       printf '  %s  inspect the body by hand\n' "$code" ;;
+esac
+
+# ------------------------------------------------------------- openai route
+say "openai route  POST $base/v1/chat/completions  (no key sent)"
+ocode=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' \
+    -X POST "$base/v1/chat/completions" \
+    -H 'content-type: application/json' \
+    -d '{"model":"x","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+    2>/dev/null) || ocode=""
+case "$ocode" in
+    401|403) printf '  %s  route exists; only the key or group was refused\n' "$ocode" ;;
+    404)     printf '  %s  no OpenAI route here; the opencode target cannot be used\n' "$ocode" ;;
+    "")      printf '  no response\n' ;;
+    *)       printf '  %s  inspect the body by hand\n' "$ocode" ;;
 esac
 
 # ------------------------------------------------------------- instance status
