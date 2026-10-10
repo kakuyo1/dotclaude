@@ -4,7 +4,7 @@ description: >-
   Contract for a two-agent feature workflow inside Orca, where one agent plans
   and reviews and another implements, exchanging work through handover documents
   and a watcher script until the reviewer approves. Use when the user types /team,
-  asks to 开 team / 组队 / 两个 agent 配合 / 让 deepseek 出方案让 space bunny 实现,
+  asks to 开 team / 组队 / 两个 agent 配合 / 让 claude 出方案让 space bunny 实现,
   asks for a plan to be handed to another agent for implementation, asks for a
   review loop between two agents, or describes a plan-implement-review cycle
   across two Orca panes. Also use when a prompt points at PLAN.md and directs
