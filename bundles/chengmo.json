@@ -9,8 +9,8 @@
     "idField": "model_name",
     "ratioField": "model_ratio",
     "requiresEndpointType": "openai",
-    "assignment": "family",
-    "prefer": "^claude-",
+    "assignment": "single",
+    "prefer": "^(codestral-latest|cohere/north-mini-code:free)$",
     "requiresToolUse": true
   },
   "opencode": {
