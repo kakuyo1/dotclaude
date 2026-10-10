@@ -161,7 +161,7 @@ if [[ -n "$provider" ]]; then
     fi
     cached_bal=$(cat "$balance_cache" 2>/dev/null || true)
     if [[ "$cached_bal" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-      cost_part="${symbol}${cached_bal}"
+      cost_part="${symbol}${cached_bal} ${provider}"
       if awk -v b="$cached_bal" 'BEGIN { exit !(b + 0 < 1) }'; then
         cost_color=$RED
       fi
