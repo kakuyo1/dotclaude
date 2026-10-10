@@ -118,18 +118,17 @@ fetch_balance() {
         jq -r '.balance_infos[0].total_balance // empty' 2>/dev/null || true
       ;;
     agentrouter)
-      # No balance is obtainable with an API key here. Measured against the
-      # live relay:
-      #   /v1/dashboard/billing/subscription returns
-      #     {"soft_limit_usd":100000000,"hard_limit_usd":100000000,
-      #      "system_hard_limit_usd":100000000}
-      #   — 100000000 is New API's "no limit" sentinel, not a balance. Rendering
-      #   it produced a literal $100000000 on the status line.
-      #   /v1/dashboard/billing/usage returns only total_usage (spend so far),
-      #   and the real per-account quota sits behind /api/user/self, which
-      #   rejects an sk- key and wants a browser session token.
-      # So there is nothing honest to render: return nothing and let the badge
-      # fallback name the provider.
+      # /api/user/self takes the system access token plus the New-Api-User id.
+      # The sk- key gets 401 there, and the dashboard billing endpoints report
+      # a "no limit" sentinel, so the token lives in the bundle's secret file.
+      # quota / 500000 is USD.
+      secrets="$HOME/.claude/bundles/agentrouter.local.json"
+      access_token=$(jq -r '.access_token // empty' "$secrets" 2>/dev/null || true)
+      new_api_user=$(jq -r '.new_api_user // empty' "$secrets" 2>/dev/null || true)
+      [[ -n "$access_token" && -n "$new_api_user" ]] || return 0
+      curl -sS --max-time 5 -H "Authorization: $access_token" -H "New-Api-User: $new_api_user" \
+        https://agentrouter.org/api/user/self 2>/dev/null |
+        jq -r '.data.quota // empty | . / 500000 | . * 100 | round / 100' 2>/dev/null || true
       ;;
     traxnode)
       # /api/user/self takes the long-lived system access token, not the sk- key
