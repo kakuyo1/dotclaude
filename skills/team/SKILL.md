@@ -125,7 +125,8 @@ of answering prompts run after run.
    ```powershell
    orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 90000 --json
 
-   & "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+     "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
      -Feature <slug> -HandoverDir <handover> `
      -ImplementerWorktreePath <implementer-worktree-path> `
      -ReviewerWorktreePath <main-repo> -Once
@@ -146,14 +147,23 @@ of answering prompts run after run.
 
    ```powershell
    $handover = "<main-repo>\.orca\team\<slug>"
-   Start-Process powershell -WindowStyle Hidden -ArgumentList @(
-     '-NoProfile', '-File',
-     "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1",
-     '-Feature', '<slug>',
-     '-HandoverDir', $handover,
-     '-ImplementerWorktreePath', '<implementer-worktree-path>',
-     '-ReviewerWorktreePath', '<main-repo>'
-   )
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+     "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
+     -Feature <slug> -HandoverDir $handover `
+     -ImplementerWorktreePath <implementer-worktree-path> `
+     -ReviewerWorktreePath <main-repo>
+   ```
+
+   Run that as a background task of the shell, not through `Start-Process`: a
+   `Start-Process` launch from Git Bash exited without ever creating a process and
+   without writing to `watcher.log`, and nothing reported the failure. Then confirm
+   the watcher is alive. A `watcher start` line in `watcher.log` within a few seconds
+   is the proof, and this process query shows the process itself:
+
+   ```powershell
+   Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+     Where-Object { $_.CommandLine -match '-File.*watcher\.ps1' } |
+     Select-Object ProcessId, CommandLine
    ```
 
    Pass `-ReviewerWorktreePath` explicitly. The watcher defaults it to its own
@@ -411,13 +421,16 @@ watcher resolves the implementer by worktree path. Rerunning the *approved* feat
 instead resumes at `approved` and exits 0 without sending anything. The branch is reused
 too, so the new plan's first step is usually to commit the previous feature's work.
 
+**The watcher never starts: no process, and `watcher.log` is empty or missing its `watcher start` line.** A launch that went through `Start-Process` can fail without any error. Start it with the direct `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ...` command from step 4 instead, and confirm with the process query there. A `running scripts is disabled` error is the execution policy; `-ExecutionPolicy Bypass` on that command line is the fix.
+
 **State was lost mid-run.** Rerun the watcher with the same `-Feature` and
 `-HandoverDir`. It resumes from `state.json` instead of restarting the loop.
 
 **Verify the wiring without sending anything:**
 
 ```powershell
-& "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  "$env:USERPROFILE\.claude\skills\team\scripts\watcher.ps1" `
   -Feature <slug> -HandoverDir <dir> -ImplementerWorktreePath <path> `
   -ReviewerWorktreePath <main-repo> -Once
 ```
