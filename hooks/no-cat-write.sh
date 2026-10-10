@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# grep -P exits 2 under a multibyte locale such as zh_CN. Each guard reads that as no match and allows the command.
+export LC_ALL=C.UTF-8
 # Uses shared anchor lib so `bash -c "cat << EOF > file"` is also caught.
 # Skips when `sudo` precedes `cat`: Write runs without elevated privileges,
 # so any `sudo cat << EOF > <target>` (regardless of where <target> lives)

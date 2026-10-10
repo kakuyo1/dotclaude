@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# grep -P exits 2 under a multibyte locale such as zh_CN. Each guard reads that as no match and allows the command.
+export LC_ALL=C.UTF-8
 # Block destructive git operations (per Claude Code git safety protocol):
 #   - git commit --amend            (always create new commits instead)
 #   - git push --force / -f         (rewrites remote history)

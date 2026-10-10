@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# grep -P exits 2 under a multibyte locale such as zh_CN. Each guard reads that as no match and allows the command.
+export LC_ALL=C.UTF-8
 set -euo pipefail
 
 source "$(dirname "$0")/lib/bypass.sh"

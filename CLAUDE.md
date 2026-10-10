@@ -2,11 +2,12 @@
 
 ## Harness Pitfalls
 
-- **Skills are mandatory** — Load ALL matching skills via the `Skill` tool before starting ANY task, even if the topic seems familiar. Skills define guardrails and workflows — not just reference docs. Never skip because "I already know it." This machine has 50+ skills; known triggers: network failure → `vpn-proxy-troubleshooting`, Chinese typography → `zhlint`, GitHub → `gh`, charts → `dataviz`, UI design → `design-taste-frontend`, minimal code → `ponytail`.
+- **Skills are mandatory** — Load ALL matching skills via the `Skill` tool before starting ANY task, even if the topic seems familiar. Skills define guardrails and workflows — not just reference docs. Never skip because "I already know it." Known triggers: network failure → `vpn-proxy-troubleshooting`, Chinese typography → `zhlint`, UI design → `taste-skill`.
 - **Parallel tool calls** — Batch ONLY independent calls; keep width ≤4. Never batch calls with data dependencies: every call's arguments freeze before any result returns, so a call needing a prior call's output can't see it. One failure cancels the whole batch → cascade.
 - **Bash output is internal** — Goes to the agent, never the user. Let every stream reach you. Probe for existence without redirection: `command -v x` for tools, `[ -e f ] ||` for files, `cmd || true` for fallbacks. The harness hook blocks `/dev/null` redirects; append `# BYPASS_DEVNULL_CHECK` only when silence is the point (a `2>/dev/null ||` fallback chain).
 - **`/tmp` is bash-only** — Git Bash resolves it to `%TEMP%`; native python and node resolve it to `C:\tmp`. An absolute `/tmp/...` written by one runtime is invisible to the other. Scratch files live in `$TEMP`.
 - **Prefer Edit/Write over sed/cat** — Edit and Write are diff-tracked by the harness (user can view or revert an edit); Bash file mutations are irreversible. Only use Bash alternatives when Edit legitimately won't work: `ssh [remote]`, `sudo tee`, `jq` on complex json.
+- **A hook denial is a stop** — When a hook denies a command, stop and ask the user before trying any other route to the same effect, including a bypass marker or a reworded command.
 
 ---
 

@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+# grep -P exits 2 under a multibyte locale such as zh_CN. Each guard reads that as no match and allows the command.
+export LC_ALL=C.UTF-8
 # Block destructive git operations that can silently destroy work:
 #   - git reset --hard          (discards working-tree and index changes)
 #   - git checkout -- / .       (discards working-tree changes for paths)
