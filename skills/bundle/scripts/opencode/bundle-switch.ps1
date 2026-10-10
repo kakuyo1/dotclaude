@@ -361,6 +361,14 @@ Restart opencode afterwards: it reads its config once at startup.
         exit 0
     }
 
+    # Adding a provider is agent research, not a sync: answered here so the
+    # command's `NEW BUNDLE` branch fires and the URL reaches the agent.
+    if ($arg -eq '--new') {
+        $url = if ($argList.Count -ge 2) { [string]$argList[1] } else { '' }
+        Write-Output ('NEW BUNDLE ' + $script:EMDash + ' no sync was attempted. url: ' + $url)
+        exit 0
+    }
+
     if ([string]::IsNullOrEmpty($arg) -or $arg -eq 'status') {
         Write-Output ('bundles: ' + (Get-BundleNames))
         exit 0

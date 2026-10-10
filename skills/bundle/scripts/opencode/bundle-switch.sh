@@ -257,6 +257,11 @@ case "${1:-}" in
     ""|status)
         printf 'bundles: %s\n' "$(list_bundles)"
         exit 0 ;;
+    --new)
+        # Adding a provider is agent research, not a sync: answered here so the
+        # command's `NEW BUNDLE` branch fires and the URL reaches the agent.
+        printf 'NEW BUNDLE — no sync was attempted. url: %s\n' "${2:-}"
+        exit 0 ;;
 esac
 
 # --diag <name>: probe every candidate and print each result, writing nothing.
