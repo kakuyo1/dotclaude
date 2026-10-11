@@ -24,7 +24,9 @@ here determines the role:
 | Signal in the incoming prompt | Role | Read |
 | --- | --- | --- |
 | A path to `PLAN.md`, and an instruction to follow this skill | **Implementer** | [Implementer](#implementer) |
+| A prompt reporting that a help answer is in `HELP.md` | **Implementer** | [Asking for help](#asking-for-help) |
 | A path to `IMPLEMENTATION.md`, and a request to review | **Planner / reviewer** | [Planner and reviewer](#planner-and-reviewer) |
+| A help request in `HELP.md`, to answer | **Planner / reviewer** (as helper) | [Answering a help request](#answering-a-help-request) |
 | A bare feature request from the user, no other agent involved yet | **Planner / reviewer** | [Planner and reviewer](#planner-and-reviewer) |
 
 The watcher never sends a message naming the role, because it does not track
@@ -61,6 +63,7 @@ commit under review.
 | `PLAN.md` | planner | implementer |
 | `IMPLEMENTATION.md` | implementer | planner |
 | `REVIEW.md` | planner | implementer |
+| `HELP.md` | implementer (requests), planner as helper (answers) | both — see [references/help.md](references/help.md) |
 | `state.json` | watcher | watcher only — never edit by hand |
 | `watcher.log` | watcher | humans, for troubleshooting |
 
@@ -283,6 +286,13 @@ change required — specific enough to act on without interpretation.
 After `APPROVED`, note anything a human should still check before shipping. The
 watcher exits at that point and nothing is merged.
 
+### Answering a help request
+
+The watcher sends this when the implementer has written a request to `HELP.md` and
+stopped. Read [references/help.md](references/help.md) before writing the answer: it
+holds the entry format and the steps. Append one solution entry to `HELP.md` and write
+nothing else. The answer is advice; the implementer applies it.
+
 ### Do not write code during review
 
 Even a one-line certain fix belongs to the implementer. Keeping the write path
@@ -300,6 +310,21 @@ reviewer's ability to trust the report; a recorded one is a conversation.
 Work only inside the implementer worktree. Never touch the planner's checkout.
 Something needed from outside the current scope is a reason to report back, not
 to reach over.
+
+### Asking for help
+
+Ask the planner when you are stuck, rather than trying a fourth fix to the same
+problem: a planner who reads the trail usually sees the cause sooner. Ask when either
+holds:
+
+- The same problem has survived three attempts at a fix: the same test or error, after
+  changes.
+- You are unsure what the plan requires or how the code behaves, and reading the plan
+  and the code does not settle it.
+
+Read [references/help.md](references/help.md) before writing the request. Write it to
+`HELP.md`, then end your turn. The watcher sends the answer as a prompt; until then,
+make no edits.
 
 ### Reporting completion
 
@@ -335,7 +360,9 @@ polling or asking for confirmation only stalls the loop.
 
 - **Neither agent merges or pushes.** The watcher never touches git either.
 - **One writer per worktree.** The planner writes only plans and reviews; the
-  implementer writes only code.
+  implementer writes only code. A helper's answer goes to `HELP.md` and nothing else.
+- **Help requests are capped** at 5 per feature by default (`-MaxHelp`). They do not
+  count as rounds.
 - **A stalled phase is usually a permission prompt.** The watcher warns rather
   than exits, because stopping there strands the work. Answer the prompt in that
   pane and the loop resumes. A prompt the watcher could not confirm delivery of is
@@ -422,6 +449,16 @@ instead resumes at `approved` and exits 0 without sending anything. The branch i
 too, so the new plan's first step is usually to commit the previous feature's work.
 
 **The watcher never starts: no process, and `watcher.log` is empty or missing its `watcher start` line.** A launch that went through `Start-Process` can fail without any error. Start it with the direct `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ...` command from step 4 instead, and confirm with the process query there. A `running scripts is disabled` error is the execution policy; `-ExecutionPolicy Bypass` on that command line is the fix.
+
+**The implementer asked for help and the phase stays at `helping`.** The watcher sends
+the request to the reviewer's pane and does not confirm that the pane started, as it
+does for the implementer. Read the reviewer's pane for the request. The answer is a new
+`solution` entry at the end of `HELP.md`.
+
+**The watcher exits 3 with `Reached MaxHelp`.** The implementer has asked more than
+`-MaxHelp` times. Group the requests in `HELP.md` by keyword. A keyword that repeats
+means the same problem came back, which usually points at the plan or the environment
+rather than at the implementer.
 
 **State was lost mid-run.** Rerun the watcher with the same `-Feature` and
 `-HandoverDir`. It resumes from `state.json` instead of restarting the loop.
