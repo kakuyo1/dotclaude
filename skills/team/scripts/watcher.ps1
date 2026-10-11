@@ -26,17 +26,20 @@
       PLAN.md            planner writes. First line must be the team-skill directive.
       IMPLEMENTATION.md  implementer writes when its turn completes.
       REVIEW.md          reviewer writes. First line is the verdict token.
+      HELP.md            implementer writes requests; reviewer (as helper) writes answers.
       state.json         watcher-owned. Resume point after a restart.
 
     State machine:
       planned      -> PLAN.md exists, nothing sent yet      -> send plan to implementer
       implementing-> implementer is working                -> wait
+      implementing-> implementer done, HELP.md request last -> ask reviewer for help
+      helping     -> HELP.md solution is last              -> send solution to implementer
       delivered   -> implementer done + IMPLEMENTATION.md  -> ask reviewer to review
       reviewing   -> REVIEW.md exists, verdict changes-... -> send review to implementer
       approved    -> exit 0
 
     Termination: the watcher exits on an APPROVED verdict, on exceeding
-    MaxRounds, or on Ctrl+C. It never merges, pushes, or touches git.
+    MaxRounds or MaxHelp, or on Ctrl+C. It never merges, pushes, or touches git.
 
 .PARAMETER Feature
     Short feature slug. Used for the handover directory name and log lines.
@@ -67,6 +70,10 @@
 .PARAMETER MaxRounds
     Safety stop. Prevents an approve/reject loop from burning tokens forever.
 
+.PARAMETER MaxHelp
+    Safety stop for help requests across the feature. Prevents an implementer that
+    keeps asking from burning tokens forever.
+
 .PARAMETER StallMinutes
     Warn (do not exit) when a phase makes no progress for this long. A silent
     implementer is usually a permission prompt waiting for a human, and killing
@@ -94,6 +101,7 @@ param(
 
     [int]$PollSeconds = 5,
     [int]$MaxRounds = 5,
+    [int]$MaxHelp = 5,
     [int]$StallMinutes = 45,
 
     [switch]$Once
@@ -110,6 +118,7 @@ $script:StatePath = Join-Path $HandoverDir 'state.json'
 $script:PlanPath           = Join-Path $HandoverDir 'PLAN.md'
 $script:ImplementationPath = Join-Path $HandoverDir 'IMPLEMENTATION.md'
 $script:ReviewPath         = Join-Path $HandoverDir 'REVIEW.md'
+$script:HelpPath           = Join-Path $HandoverDir 'HELP.md'
 
 # Per-process bookkeeping, deliberately outside state.json: a restart is a fresh
 # start for a retry budget and a warning throttle, and keeping them out leaves
@@ -436,6 +445,32 @@ function Test-PlanIsWellFormed {
     return $true
 }
 
+<#
+.SYNOPSIS
+    Reads the help dialogue as a list of entries, in file order.
+.DESCRIPTION
+    Only headings in the fixed format are entries; prose under them is ignored.
+    Routing uses order, kind and role. The numbers the agents write are for the
+    humans reading the file.
+#>
+function Get-HelpEntries {
+    if (-not (Test-Path -LiteralPath $script:HelpPath)) { return @() }
+
+    $entries = @()
+    foreach ($line in Get-Content -LiteralPath $script:HelpPath -Encoding utf8) {
+        if ($line -match '^##\s+\d+\s*\|\s*(request|solution)\s*\|\s*(implementer|helper)\s*\|') {
+            $entries += [pscustomobject]@{ Kind = $Matches[1]; Role = $Matches[2] }
+        }
+    }
+    return $entries
+}
+
+function Get-LastHelpEntry {
+    $entries = @(Get-HelpEntries)
+    if ($entries.Count -eq 0) { return $null }
+    return $entries[-1]
+}
+
 # --- watcher state ---------------------------------------------------------
 
 function Read-WatcherState {
@@ -557,6 +592,39 @@ Then stop and wait. The watcher will route your next report to the reviewer.
 "@
 }
 
+function New-HelpRequestPrompt {
+    @"
+The implementer for feature '$Feature' is stuck and asked for help.
+
+  Help dialogue: $script:HelpPath
+
+Read the last entry, which is the request, and the entries before it. Then read the
+files it cites, in the implementer's worktree ($ImplementerWorktreePath). Read only:
+the implementer applies the fix, so do not edit anything there.
+
+Follow the "Answering" section of the team skill's references/help.md. Append your
+answer to the same file as one solution entry, in English and plain ASCII, with the
+same keyword as the request.
+
+Then stop. The watcher routes your answer to the implementer.
+"@
+}
+
+function New-HelpAnswerPrompt {
+    @"
+The helper answered your help request for feature '$Feature'.
+
+  Help dialogue: $script:HelpPath
+
+Read the solution entry at the end of that file and apply it, within the plan's
+constraints. Where it conflicts with the plan, follow the plan and say so in your
+report, as the team skill describes.
+
+Then continue your work. When the implementation is complete, write your report to:
+  $script:ImplementationPath
+"@
+}
+
 # --- main loop -------------------------------------------------------------
 
 New-Item -ItemType Directory -Path $HandoverDir -Force | Out-Null
@@ -662,6 +730,24 @@ while ($true) {
                 Start-Sleep -Seconds $PollSeconds
                 continue
             }
+            # A request is the implementer stopping to ask, not finishing. It is
+            # checked before the report, because a request arrives with no report.
+            $last = Get-LastHelpEntry
+            if ($null -ne $last -and $last.Kind -eq 'request' -and $last.Role -eq 'implementer') {
+                $asked = @(Get-HelpEntries | Where-Object { $_.Kind -eq 'request' }).Count
+                if ($asked -gt $MaxHelp) {
+                    Write-Log -Level ERROR -Message (
+                        "Reached MaxHelp ($MaxHelp) help requests. Stopping so a human can read " +
+                        'HELP.md instead of another request.'
+                    )
+                    Write-WatcherState -State $state -Phase 'exhausted'
+                    exit 3
+                }
+                Send-ToTerminal -Handle $ReviewerTerminal -Text (New-HelpRequestPrompt) -Label 'reviewer'
+                Write-WatcherState -State $state -Phase 'helping'
+                continue
+            }
+
             # The report must be newer than the review that asked for it. Testing
             # only for the file's existence let a change request that never reached
             # the implementer hand the reviewer the *previous* round's report; the
@@ -689,6 +775,23 @@ while ($true) {
             Send-ToTerminal -Handle $ReviewerTerminal -Text (New-ReviewPrompt) -Label 'reviewer'
             $state.reviewRequested = $true
             Write-WatcherState -State $state -Phase 'reviewing'
+        }
+
+        'helping' {
+            # The answer is the last entry. The request stays last until the helper
+            # writes, so a solution found here answers that request.
+            $last = Get-LastHelpEntry
+            if ($null -eq $last -or $last.Kind -ne 'solution' -or $last.Role -ne 'helper') {
+                Start-Sleep -Seconds $PollSeconds
+                continue
+            }
+            Send-ToTerminal -Handle $ImplementerTerminal -Text (New-HelpAnswerPrompt) -Label 'implementer'
+            if (-not (Wait-ForImplementerToStart)) {
+                Write-PromptNotDeliveredWarning -Reason 'The implementer stayed idle after the help answer was sent.'
+                Start-Sleep -Seconds $PollSeconds
+                continue
+            }
+            Write-WatcherState -State $state -Phase 'implementing'
         }
 
         'reviewing' {
