@@ -58,6 +58,76 @@ OC_CFG="$HOME/.config/opencode/opencode.jsonc"
 OC_CMD_SRC="$CLAUDE_DIR/skills/bundle/assets/bundle.command.md"
 OC_STATE="/tmp/claude-${UID}-state"
 
+# ---------------------------------------------------------------------------
+# Route. A local proxy is tried first whenever one is configured: the
+# HTTP(S)_PROXY variables, then the system proxy (Windows registry, macOS
+# scutil). It is kept only if it answers the provider; otherwise every call
+# goes direct. ROUTE records the choice for the report.
+PROXY=""
+ROUTE=""
+
+detect_proxy() {
+    local v p key
+    for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+        p="${!v:-}"
+        [ -n "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    if command -v reg >/dev/null 2>&1; then
+        key='HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+        if reg query "$key" //v ProxyEnable 2>/dev/null | grep -q '0x1'; then
+            p=$(reg query "$key" //v ProxyServer 2>/dev/null |
+                awk 'NR == 3 { $1 = ""; $2 = ""; sub(/^[ \t]+/, ""); print }' | tr -d '\r')
+            # "http=a;https=b" form: the https entry is the one curl needs
+            case "$p" in *=*) p=$(printf '%s' "$p" | tr ';' '\n' | sed -n 's/^https=//p') ;; esac
+            if [ -n "$p" ]; then printf 'http://%s' "${p#http://}"; return 0; fi
+        fi
+    fi
+    if command -v scutil >/dev/null 2>&1; then
+        scutil --proxy | awk -F' : ' '
+            /HTTPSEnable/ { on = $2 }
+            /HTTPSProxy/  { host = $2 }
+            /HTTPSPort/   { port = $2 }
+            END { if (on == 1 && host != "") printf "http://%s:%s", host, port }'
+    fi
+}
+
+# curl skips the proxy for NO_PROXY hosts even with -x, so a bypass is reported
+# as direct rather than as a proxy route.
+no_proxy_hit() {
+    local host="$1" list="${NO_PROXY:-${no_proxy:-}}" entry
+    local -a entries
+    [ -n "$list" ] || return 1
+    IFS=',' read -r -a entries <<< "$list"
+    for entry in "${entries[@]}"; do
+        entry="${entry// /}"; entry="${entry#.}"
+        [ "$entry" = "*" ] && return 0
+        [ -n "$entry" ] || continue
+        case "$host" in "$entry"|*".$entry") return 0 ;; esac
+    done
+    return 1
+}
+
+# Keep the proxy only if it answers the provider; a dead proxy must not block a
+# direct route that works.
+choose_route() {
+    local url="$1" cand host
+    cand=$(detect_proxy)
+    if [ -z "$cand" ]; then ROUTE="direct"; return 0; fi
+    host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://##; s#[:/].*$##')
+    if no_proxy_hit "$host"; then ROUTE="direct (NO_PROXY)"; return 0; fi
+    if curl -sS -m 8 -o /dev/null -x "$cand" "$url" 2>/dev/null; then
+        PROXY="$cand"
+        ROUTE="proxy $cand"
+    else
+        ROUTE="direct (proxy $cand did not answer)"
+    fi
+}
+
+# Every network call of the switch goes through here, so the route is decided once.
+net() {
+    if [ -n "$PROXY" ]; then curl -x "$PROXY" "$@"; else curl "$@"; fi
+}
+
 oc_version() {
     local v
     v=$(opencode --version 2>/dev/null | awk 'NR==1 {print $1}')
@@ -83,7 +153,7 @@ oc_probe() {
     resp=$(mktemp) || return 0
     while :; do
         attempt=$((attempt+1))
-        code=$(curl -sS --max-time 30 -o "$resp" -w '%{http_code}' \
+        code=$(net -sS --max-time 30 -o "$resp" -w '%{http_code}' \
             -X POST "${base}/chat/completions" \
             -H "Authorization: Bearer $tok" \
             -H "content-type: application/json" \
@@ -134,7 +204,7 @@ oc_models() {
 
     # Same fallback rule as resolve_models: a fetch that fails serves the last
     # good list for this bundle, in this namespace only.
-    json=$(curl -sS --max-time 12 -A "$OC_UA" \
+    json=$(net -sS --max-time 12 -A "$OC_UA" \
         -H "Authorization: Bearer $tok" "$url") || curl_rc=$?
     if [ "$curl_rc" -ne 0 ]; then
         printf '%s' "curl exit $curl_rc" > "$notefile" 2>/dev/null
@@ -196,12 +266,13 @@ opencode_switch() {
 
     base=$(jqr '.opencode.baseURL // empty' "$prof" 2>/dev/null)
     [ -n "$base" ] || not_switched "$prof has no opencode block: set opencode.baseURL"
+    choose_route "$base"
 
     OC_UA="opencode/$(oc_version)"
     rows=$(oc_models "$prof" "$base" "$tok"); rc=$?
     detail=$(cat "$note" 2>/dev/null) || detail=""
     case "$rc" in
-        1) not_switched "could not fetch the opencode model list${detail:+ ($detail)}." ;;
+        1) not_switched "could not fetch the opencode model list via $ROUTE${detail:+ ($detail)}." ;;
         2) not_switched "no model behind $base answered the opencode probe. $detail" ;;
         3) not_switched "the opencode list arrived, but no row survived requiresEndpointType \"$(jqr '.opencode.requiresEndpointType // ""' "$prof")\"." ;;
     esac
@@ -241,6 +312,7 @@ opencode_switch() {
         not_switched "could not move the synced opencode files into place"
 
     printf '/bundle %s (opencode)\n' "$name"
+printf '  route %s\n' "$ROUTE"
     printf '  models %s\n' "$(printf '%s\n' "$rows" | cut -f1 | tr '\n' ' ')"
     printf '\nRestart opencode to pick this up: it reads its config once at startup.\n\n'
     exit 0

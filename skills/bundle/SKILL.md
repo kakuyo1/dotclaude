@@ -42,7 +42,8 @@ If that stdout starts with `NEW BUNDLE`, the user is adding a provider: read
 `references/claudecode.md` and follow it, instead of relaying the stdout.
 
 Otherwise relay the stdout verbatim, then add at most one sentence of
-explanation.
+explanation. The `route` line says whether a local proxy carried the switch; if
+it says a proxy did not answer, say so and point to `vpn-proxy-troubleshooting`.
 
 If it does not start with `/bundle <name>` (or say `bundles:`), the switch did
 NOT happen. Say so plainly. Never claim a provider switch that the output does

@@ -168,6 +168,64 @@ function Get-ClaudeCliVersion {
     return '0.0.0'
 }
 
+# ---------------------------------------------------------------------------
+# Route. A local proxy is tried first whenever one is configured: the
+# HTTP(S)_PROXY variables, then the Windows system proxy. curl.exe reads neither
+# the registry nor the settings UI, so the system proxy is read here and passed
+# with -x. It is kept only if it answers the provider; otherwise calls go direct.
+$script:Proxy = ''
+$script:Route = ''
+
+function Get-ProxyCandidate {
+    foreach ($v in @('HTTPS_PROXY', 'HTTP_PROXY')) {
+        $p = [Environment]::GetEnvironmentVariable($v)
+        if (-not [string]::IsNullOrEmpty($p)) { return $p }
+    }
+    $ie = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+    if ($null -eq $ie -or $ie.ProxyEnable -ne 1 -or [string]::IsNullOrEmpty([string]$ie.ProxyServer)) { return '' }
+    $srv = [string]$ie.ProxyServer
+    # "http=a;https=b" form: the https entry is the one curl needs
+    if ($srv -match '(?:^|;)https=([^;]+)') { $srv = $Matches[1] }
+    elseif ($srv -match '=') { return '' }
+    if ($srv -notmatch '^[a-z]+://') { $srv = 'http://' + $srv }
+    return $srv
+}
+
+# curl.exe skips the proxy for NO_PROXY hosts even with -x, so a bypass is
+# reported as direct rather than as a proxy route.
+function Test-NoProxy([string]$Url) {
+    $list = [Environment]::GetEnvironmentVariable('NO_PROXY')
+    if ([string]::IsNullOrEmpty($list)) { return $false }
+    $hostName = ([System.Uri]$Url).Host
+    foreach ($entry in ($list -split ',')) {
+        $e = $entry.Trim().TrimStart('.')
+        if ($e -eq '*') { return $true }
+        if ($e -ne '' -and ($hostName -eq $e -or $hostName.EndsWith('.' + $e))) { return $true }
+    }
+    return $false
+}
+
+# Keep the proxy only if it answers the provider; a dead proxy must not block a
+# direct route that works.
+function Set-Route([string]$Url) {
+    $cand = Get-ProxyCandidate
+    if ([string]::IsNullOrEmpty($cand)) { $script:Route = 'direct'; return }
+    if (Test-NoProxy $Url) { $script:Route = 'direct (NO_PROXY)'; return }
+    & curl.exe -s -m 8 -o NUL -x $cand $Url
+    if ($LASTEXITCODE -eq 0) {
+        $script:Proxy = $cand
+        $script:Route = 'proxy ' + $cand
+    } else {
+        $script:Route = 'direct (proxy ' + $cand + ' did not answer)'
+    }
+}
+
+# Every curl.exe call of the switch goes through here, so the route is decided once.
+function Invoke-Curl {
+    if ($script:Proxy -ne '') { & curl.exe -x $script:Proxy @args }
+    else { & curl.exe @args }
+}
+
 # The probe must carry a Claude Code User-Agent: agentrouter fingerprints
 # clients and answers 401 "unauthorized client detected" to anything that does
 # not look like one. It matches the SHAPE claude-cli/<anything> (external, cli).
@@ -205,7 +263,7 @@ function Invoke-ModelProbe([string]$Base, [string]$Model, [string]$Token) {
     try {
         Set-Content -LiteralPath $tmp -Value $body -Encoding Ascii -NoNewline
         for ($attempt = 1; $attempt -le 2; $attempt++) {
-            $code = & curl.exe -sS --max-time 30 -o $out -w '%{http_code}' `
+            $code = Invoke-Curl -sS --max-time 30 -o $out -w '%{http_code}' `
                 -X POST "$Base/v1/messages" `
                 -H "Authorization: Bearer $Token" `
                 -H 'content-type: application/json' `
@@ -283,7 +341,7 @@ function Resolve-Models([string]$ProfPath, $Prof, [string]$Base, [string]$Token)
         # code is kept: "could not fetch" otherwise reads the same for an
         # unresolvable host, a reset connection and a TLS failure, and curl
         # distinguishes them (6 / 7 / 35) without any mapping table.
-        & curl.exe -sS --max-time 12 -A $script:ProbeUA -H "Authorization: Bearer $Token" -o $bodyPath $url
+        Invoke-Curl -sS --max-time 12 -A $script:ProbeUA -H "Authorization: Bearer $Token" -o $bodyPath $url
         if ($LASTEXITCODE -ne 0) { $fetchNote = 'curl exit ' + $LASTEXITCODE }
         if (Test-Path -LiteralPath $bodyPath) {
             $json = Get-Content -LiteralPath $bodyPath -Raw -Encoding UTF8
@@ -572,6 +630,7 @@ not enough.
 
     $rmFrom = [string](Get-Prop (Get-Prop $prof 'resolveModels') 'from')
     if (-not [string]::IsNullOrEmpty($rmFrom)) {
+        Set-Route $rmFrom
         $baseUrl = [string](Get-Prop $profEnv 'ANTHROPIC_BASE_URL')
         $res = Resolve-Models $profPath $prof $baseUrl $token
         if ($res.rc -eq 0) {
@@ -596,7 +655,7 @@ not enough.
                 'was discarded before any probe ran ' + $script:EMDash + ' compare that value against' + "`n" +
                 'what the endpoint actually publishes for supported_endpoint_types.')
         } else {
-            $why = 'could not fetch the model list from ' + $rmFrom + '.'
+            $why = 'could not fetch the model list from ' + $rmFrom + ' via ' + $script:Route + '.'
             if (-not [string]::IsNullOrEmpty($res.detail)) { $why += ' ' + $res.detail + '.' }
             Write-NotSwitched $why
         }
@@ -653,6 +712,7 @@ not enough.
     Write-Output ('/bundle ' + $name)
     Write-Output ('  model ' + (Get-RegValue 'ANTHROPIC_MODEL'))
     Write-Output ('  base  ' + (Get-RegValue 'ANTHROPIC_BASE_URL'))
+    if ($script:Route -ne '') { Write-Output ('  route ' + $script:Route) }
     Write-Output ('  token present (' + $token.Length + ' chars)')
     Write-Output ''
     Write-Output 'Open a NEW terminal before using it: the registry only affects newly'

@@ -88,6 +88,64 @@ $script:OcCmd    = Join-Path $env:USERPROFILE '.config\opencode\command\bundle.m
 $script:OcCfg    = Join-Path $env:USERPROFILE '.config\opencode\opencode.jsonc'
 $script:OcCmdSrc = Join-Path $script:ClaudeDir 'skills\bundle\assets\bundle.command.md'
 
+# ---------------------------------------------------------------------------
+# Route. A local proxy is tried first whenever one is configured: the
+# HTTP(S)_PROXY variables, then the Windows system proxy. curl.exe reads neither
+# the registry nor the settings UI, so the system proxy is read here and passed
+# with -x. It is kept only if it answers the provider; otherwise calls go direct.
+$script:Proxy = ''
+$script:Route = ''
+
+function Get-ProxyCandidate {
+    foreach ($v in @('HTTPS_PROXY', 'HTTP_PROXY')) {
+        $p = [Environment]::GetEnvironmentVariable($v)
+        if (-not [string]::IsNullOrEmpty($p)) { return $p }
+    }
+    $ie = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+    if ($null -eq $ie -or $ie.ProxyEnable -ne 1 -or [string]::IsNullOrEmpty([string]$ie.ProxyServer)) { return '' }
+    $srv = [string]$ie.ProxyServer
+    # "http=a;https=b" form: the https entry is the one curl needs
+    if ($srv -match '(?:^|;)https=([^;]+)') { $srv = $Matches[1] }
+    elseif ($srv -match '=') { return '' }
+    if ($srv -notmatch '^[a-z]+://') { $srv = 'http://' + $srv }
+    return $srv
+}
+
+# curl.exe skips the proxy for NO_PROXY hosts even with -x, so a bypass is
+# reported as direct rather than as a proxy route.
+function Test-NoProxy([string]$Url) {
+    $list = [Environment]::GetEnvironmentVariable('NO_PROXY')
+    if ([string]::IsNullOrEmpty($list)) { return $false }
+    $hostName = ([System.Uri]$Url).Host
+    foreach ($entry in ($list -split ',')) {
+        $e = $entry.Trim().TrimStart('.')
+        if ($e -eq '*') { return $true }
+        if ($e -ne '' -and ($hostName -eq $e -or $hostName.EndsWith('.' + $e))) { return $true }
+    }
+    return $false
+}
+
+# Keep the proxy only if it answers the provider; a dead proxy must not block a
+# direct route that works.
+function Set-Route([string]$Url) {
+    $cand = Get-ProxyCandidate
+    if ([string]::IsNullOrEmpty($cand)) { $script:Route = 'direct'; return }
+    if (Test-NoProxy $Url) { $script:Route = 'direct (NO_PROXY)'; return }
+    & curl.exe -s -m 8 -o NUL -x $cand $Url
+    if ($LASTEXITCODE -eq 0) {
+        $script:Proxy = $cand
+        $script:Route = 'proxy ' + $cand
+    } else {
+        $script:Route = 'direct (proxy ' + $cand + ' did not answer)'
+    }
+}
+
+# Every curl.exe call of the switch goes through here, so the route is decided once.
+function Invoke-Curl {
+    if ($script:Proxy -ne '') { & curl.exe -x $script:Proxy @args }
+    else { & curl.exe @args }
+}
+
 function Get-OpenCodeVersion {
     try {
         $out = & opencode --version 2>$null
@@ -118,7 +176,7 @@ function Invoke-OcProbe([string]$Base, [string]$Model, [string]$Token) {
     try {
         [System.IO.File]::WriteAllText($tmp, $script:Json.Serialize($body), (New-Object System.Text.UTF8Encoding $false))
         for ($attempt = 1; $attempt -le 2; $attempt++) {
-            $code = & curl.exe -sS --max-time 30 -o $out -w '%{http_code}' `
+            $code = Invoke-Curl -sS --max-time 30 -o $out -w '%{http_code}' `
                 -X POST "$Base/chat/completions" `
                 -H "Authorization: Bearer $Token" `
                 -H 'content-type: application/json' `
@@ -178,7 +236,7 @@ function Resolve-OcModels($Prof, [string]$Base, [string]$Token) {
     $fetchNote = ''
     $bodyPath = Join-Path $env:TEMP ('bundle-oc-models-' + [guid]::NewGuid().ToString('n') + '.json')
     try {
-        & curl.exe -sS --max-time 12 -A $script:OcUA -H "Authorization: Bearer $Token" -o $bodyPath $url
+        Invoke-Curl -sS --max-time 12 -A $script:OcUA -H "Authorization: Bearer $Token" -o $bodyPath $url
         if ($LASTEXITCODE -ne 0) { $fetchNote = 'curl exit ' + $LASTEXITCODE }
         if (Test-Path -LiteralPath $bodyPath) { $json = Get-Content -LiteralPath $bodyPath -Raw -Encoding UTF8 }
     } catch { $json = '' } finally {
@@ -271,11 +329,12 @@ function Invoke-OpenCodeSwitch($Prof, [string]$Token) {
     $oc = Get-Prop $Prof 'opencode'
     $base = [string](Get-Prop $oc 'baseURL')
     if ([string]::IsNullOrEmpty($base)) { Write-NotSwitched 'the bundle has no opencode block: set opencode.baseURL' }
+    Set-Route $base
     $script:OcUA = 'opencode/' + (Get-OpenCodeVersion)
 
     $res = Resolve-OcModels $Prof $base $Token
     $detail = [string]$res.detail
-    if ($res.rc -eq 1) { Write-NotSwitched ('could not fetch the opencode model list' + $(if ($detail) { ' (' + $detail + ')' } else { '' }) + '.') }
+    if ($res.rc -eq 1) { Write-NotSwitched ('could not fetch the opencode model list via ' + $script:Route + $(if ($detail) { ' (' + $detail + ')' } else { '' }) + '.') }
     if ($res.rc -eq 2) { Write-NotSwitched ('no model behind ' + $base + ' answered the opencode probe. ' + $detail) }
     if ($res.rc -eq 3) {
         Write-NotSwitched ('the opencode list arrived, but no row survived requiresEndpointType "' +
@@ -315,6 +374,7 @@ function Invoke-OpenCodeSwitch($Prof, [string]$Token) {
     }
 
     Write-Output ('/bundle ' + $script:Name + ' (opencode)')
+    Write-Output ('  route ' + $script:Route)
     Write-Output ('  models ' + (($res.rows | ForEach-Object { $_.name }) -join ' '))
     Write-Output ''
     Write-Output 'Restart opencode to pick this up: it reads its config once at startup.'

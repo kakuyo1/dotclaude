@@ -178,6 +178,76 @@ claude_cli_version() {
 }
 PROBE_UA="claude-cli/$(claude_cli_version) (external, cli)"
 
+# ---------------------------------------------------------------------------
+# Route. A local proxy is tried first whenever one is configured: the
+# HTTP(S)_PROXY variables, then the system proxy (Windows registry, macOS
+# scutil). It is kept only if it answers the provider; otherwise every call
+# goes direct. ROUTE records the choice for the report.
+PROXY=""
+ROUTE=""
+
+detect_proxy() {
+    local v p key
+    for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+        p="${!v:-}"
+        [ -n "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    if command -v reg >/dev/null 2>&1; then
+        key='HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+        if reg query "$key" //v ProxyEnable 2>/dev/null | grep -q '0x1'; then
+            p=$(reg query "$key" //v ProxyServer 2>/dev/null |
+                awk 'NR == 3 { $1 = ""; $2 = ""; sub(/^[ \t]+/, ""); print }' | tr -d '\r')
+            # "http=a;https=b" form: the https entry is the one curl needs
+            case "$p" in *=*) p=$(printf '%s' "$p" | tr ';' '\n' | sed -n 's/^https=//p') ;; esac
+            if [ -n "$p" ]; then printf 'http://%s' "${p#http://}"; return 0; fi
+        fi
+    fi
+    if command -v scutil >/dev/null 2>&1; then
+        scutil --proxy | awk -F' : ' '
+            /HTTPSEnable/ { on = $2 }
+            /HTTPSProxy/  { host = $2 }
+            /HTTPSPort/   { port = $2 }
+            END { if (on == 1 && host != "") printf "http://%s:%s", host, port }'
+    fi
+}
+
+# curl skips the proxy for NO_PROXY hosts even with -x, so a bypass is reported
+# as direct rather than as a proxy route.
+no_proxy_hit() {
+    local host="$1" list="${NO_PROXY:-${no_proxy:-}}" entry
+    local -a entries
+    [ -n "$list" ] || return 1
+    IFS=',' read -r -a entries <<< "$list"
+    for entry in "${entries[@]}"; do
+        entry="${entry// /}"; entry="${entry#.}"
+        [ "$entry" = "*" ] && return 0
+        [ -n "$entry" ] || continue
+        case "$host" in "$entry"|*".$entry") return 0 ;; esac
+    done
+    return 1
+}
+
+# Keep the proxy only if it answers the provider; a dead proxy must not block a
+# direct route that works.
+choose_route() {
+    local url="$1" cand host
+    cand=$(detect_proxy)
+    if [ -z "$cand" ]; then ROUTE="direct"; return 0; fi
+    host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://##; s#[:/].*$##')
+    if no_proxy_hit "$host"; then ROUTE="direct (NO_PROXY)"; return 0; fi
+    if curl -sS -m 8 -o /dev/null -x "$cand" "$url" 2>/dev/null; then
+        PROXY="$cand"
+        ROUTE="proxy $cand"
+    else
+        ROUTE="direct (proxy $cand did not answer)"
+    fi
+}
+
+# Every network call of the switch goes through here, so the route is decided once.
+net() {
+    if [ -n "$PROXY" ]; then curl -x "$PROXY" "$@"; else curl "$@"; fi
+}
+
 # The only evidence the script has about a candidate. The request carries a tools
 # array and an unambiguous instruction to call the tool, so a 200 can be told
 # apart from a model that merely answers: measured on chengmo, 15 of 73 listed
@@ -205,7 +275,7 @@ probe_model() {
     resp=$(mktemp) || return 0
     while :; do
         attempt=$((attempt+1))
-        code=$(curl -sS --max-time 30 -o "$resp" -w '%{http_code}' \
+        code=$(net -sS --max-time 30 -o "$resp" -w '%{http_code}' \
             -X POST "${base}/v1/messages" \
             -H "Authorization: Bearer $tok" \
             -H "content-type: application/json" \
@@ -258,7 +328,7 @@ resolve_models() {
     # kept: "could not fetch" otherwise reads the same for an unresolvable host,
     # a reset connection and a TLS failure, and curl separates them (6 / 7 / 35).
     local curl_rc=0
-    json=$(curl -sS --max-time 12 -A "$PROBE_UA" \
+    json=$(net -sS --max-time 12 -A "$PROBE_UA" \
         -H "Authorization: Bearer $tok" "$url") || curl_rc=$?
     if [ "$curl_rc" -ne 0 ]; then
         printf '%s' "curl exit $curl_rc" > "$notefile" 2>/dev/null
@@ -466,6 +536,7 @@ jqr '.env | to_entries[] | "\(.key)=\(.value)"' "$prof" > "$plan" 2>/dev/null ||
 resolve_url=$(jqr '.resolveModels.from // empty' "$prof" 2>/dev/null)
 notefile="/tmp/claude-${UID}-state/$(basename "$prof" .json)-lastfail.txt"
 if [ -n "$resolve_url" ]; then
+    choose_route "$resolve_url"
     base=$(jqr '.env.ANTHROPIC_BASE_URL // empty' "$prof" 2>/dev/null)
     resolved=$(resolve_models "$prof" "$base" "$token")
     rc=$?
@@ -488,7 +559,7 @@ resolveModels filter (requiresEndpointType \"$ep_filter\"). Every candidate was
 discarded before any probe ran — compare that value against what the endpoint
 actually publishes for supported_endpoint_types."
     else
-        msg="could not fetch the model list from $resolve_url."
+        msg="could not fetch the model list from $resolve_url via $ROUTE."
         [ -n "$detail" ] && msg="$msg $detail."
         not_switched "$msg"
     fi
@@ -536,6 +607,7 @@ printf '/bundle %s\n' "$name"
 # models at all and have them resolved at switch time instead.
 printf '  model %s\n' "$(reg_get ANTHROPIC_MODEL)"
 printf '  base  %s\n' "$(reg_get ANTHROPIC_BASE_URL)"
+if [ -n "$ROUTE" ]; then printf '  route %s\n' "$ROUTE"; fi
 printf '  token present (%s chars)\n' "${#token}"
 printf '\nOpen a NEW terminal before using it: the registry only affects newly\n'
 printf 'created processes, so restarting claude in this terminal is not enough.\n\n'

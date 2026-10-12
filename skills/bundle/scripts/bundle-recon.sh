@@ -62,9 +62,82 @@ trim() {
     fi
 }
 
+# ---------------------------------------------------------------------- route
+# A local proxy is tried first whenever one is configured: the HTTP(S)_PROXY
+# variables, then the system proxy (Windows registry, macOS scutil). It is kept
+# only if it answers the provider; otherwise every request goes direct. The
+# reachability section below tests both sides regardless, for NO_PROXY.
+PROXY=""
+ROUTE=""
+
+detect_proxy() {
+    local v p key
+    for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
+        p="${!v:-}"
+        [ -n "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    if command -v reg >/dev/null 2>&1; then
+        key='HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+        if reg query "$key" //v ProxyEnable 2>/dev/null | grep -q '0x1'; then
+            p=$(reg query "$key" //v ProxyServer 2>/dev/null |
+                awk 'NR == 3 { $1 = ""; $2 = ""; sub(/^[ \t]+/, ""); print }' | tr -d '\r')
+            # "http=a;https=b" form: the https entry is the one curl needs
+            case "$p" in *=*) p=$(printf '%s' "$p" | tr ';' '\n' | sed -n 's/^https=//p') ;; esac
+            if [ -n "$p" ]; then printf 'http://%s' "${p#http://}"; return 0; fi
+        fi
+    fi
+    if command -v scutil >/dev/null 2>&1; then
+        scutil --proxy | awk -F' : ' '
+            /HTTPSEnable/ { on = $2 }
+            /HTTPSProxy/  { host = $2 }
+            /HTTPSPort/   { port = $2 }
+            END { if (on == 1 && host != "") printf "http://%s:%s", host, port }'
+    fi
+}
+
+# curl skips the proxy for NO_PROXY hosts even with -x, so a bypass is reported
+# as direct rather than as a proxy route.
+no_proxy_hit() {
+    local host="$1" list="${NO_PROXY:-${no_proxy:-}}" entry
+    local -a entries
+    [ -n "$list" ] || return 1
+    IFS=',' read -r -a entries <<< "$list"
+    for entry in "${entries[@]}"; do
+        entry="${entry// /}"; entry="${entry#.}"
+        [ "$entry" = "*" ] && return 0
+        [ -n "$entry" ] || continue
+        case "$host" in "$entry"|*".$entry") return 0 ;; esac
+    done
+    return 1
+}
+
+# Keep the proxy only if it answers the provider; a dead proxy must not block a
+# direct route that works.
+choose_route() {
+    local url="$1" cand host
+    cand=$(detect_proxy)
+    if [ -z "$cand" ]; then ROUTE="direct"; return 0; fi
+    host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://##; s#[:/].*$##')
+    if no_proxy_hit "$host"; then ROUTE="direct (NO_PROXY)"; return 0; fi
+    if curl -sS -m 8 -o /dev/null -x "$cand" "$url" 2>/dev/null; then
+        PROXY="$cand"
+        ROUTE="proxy $cand"
+    else
+        ROUTE="direct (proxy $cand did not answer)"
+    fi
+}
+
+# Every request of the recon goes through here, so the route is decided once.
+net() {
+    if [ -n "$PROXY" ]; then curl -x "$PROXY" "$@"; else curl "$@"; fi
+}
+
+choose_route "$base"
+say "route  $ROUTE"
+
 # ---------------------------------------------------------------- fingerprint
 say "fingerprint  $base"
-hdr=$(curl -sS -m 15 -D - -o /dev/null "$base/" 2>&1) || hdr=""
+hdr=$(net -sS -m 15 -D - -o /dev/null "$base/" 2>&1) || hdr=""
 if [ -z "$hdr" ]; then
     printf '  no response from %s/  (host down, wrong scheme, or blocked)\n' "$base"
 else
@@ -85,7 +158,7 @@ fi
 
 # ------------------------------------------------------------ anthropic route
 say "anthropic route  POST $base/v1/messages  (no key sent)"
-code=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' \
+code=$(net -sS -m 20 -o /dev/null -w '%{http_code}' \
     -X POST "$base/v1/messages" \
     -H 'content-type: application/json' \
     -H 'anthropic-version: 2023-06-01' \
@@ -102,7 +175,7 @@ esac
 
 # ------------------------------------------------------------- openai route
 say "openai route  POST $base/v1/chat/completions  (no key sent)"
-ocode=$(curl -sS -m 20 -o /dev/null -w '%{http_code}' \
+ocode=$(net -sS -m 20 -o /dev/null -w '%{http_code}' \
     -X POST "$base/v1/chat/completions" \
     -H 'content-type: application/json' \
     -d '{"model":"x","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
@@ -116,7 +189,7 @@ esac
 
 # ------------------------------------------------------------- instance status
 say "instance status  GET $base/api/status"
-st=$(curl -sS -m 15 "$base/api/status") || st=""
+st=$(net -sS -m 15 "$base/api/status") || st=""
 if [ -z "$st" ] || ! printf '%s' "$st" | jq -e . >/dev/null 2>&1; then
     printf '  not public JSON (gated, or not a New API instance)\n'
 else
@@ -132,7 +205,7 @@ fi
 
 # --------------------------------------------------------------------- catalog
 say "catalog  GET $base/api/pricing"
-pr=$(curl -sS -m 20 "$base/api/pricing") || pr=""
+pr=$(net -sS -m 20 "$base/api/pricing") || pr=""
 if [ -z "$pr" ] || ! printf '%s' "$pr" | jq -e '.data' >/dev/null 2>&1; then
     printf '  not a public priced catalog (gated, or not New API)\n'
     printf '  fall back to GET %s/models with idField "id"\n' "$base"

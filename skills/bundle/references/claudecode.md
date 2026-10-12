@@ -72,7 +72,8 @@ It reports five facts, each answering something the model list cannot:
 Where bash is absent (some Windows machines), make the same requests by hand:
 `curl -s <base>/api/status`, `curl -s <base>/api/pricing`, a key-free
 `curl -X POST <base>/v1/messages`, and `curl -D - -o /dev/null <base>/` for the
-fingerprint headers.
+fingerprint headers. Send each through the local proxy first when one is set
+(`curl -x`), as the script does.
 
 ## 4. Find where the model list lives
 
