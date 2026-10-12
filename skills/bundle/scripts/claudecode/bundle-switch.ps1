@@ -13,8 +13,9 @@
 # Invoked from inside the /bundle skill. The opencode side is
 # ..\opencode\bundle-switch.ps1, which shares no code with this file. This port replaces bash+jq with the
 # native Windows toolchain: System.Web.Script.Serialization for JSON, curl.exe
-# for HTTP, and [Environment]::SetEnvironmentVariable for the registry (it
-# broadcasts WM_SETTINGCHANGE, so a newly opened terminal picks the values up).
+# for HTTP, and Microsoft.Win32.Registry for the registry, followed by one
+# hand-sent WM_SETTINGCHANGE so a newly opened terminal picks the values up.
+# [Environment]::SetEnvironmentVariable is NOT used: see Send-SettingsChanged.
 #
 # Why HKCU\Environment and not settings.json: the API token cannot live in the
 # tracked settings.json, and settings.local.json is not read for env. Both the
@@ -68,20 +69,56 @@ function Get-RegValue([string]$Name) {
     }
 }
 
-# write one variable and broadcast. Empty value deletes it (the previous
-# provider's value must not linger, and SetEnvironmentVariable(null) removes
-# the registry entry while still broadcasting WM_SETTINGCHANGE).
+# write one variable. Empty value deletes it (the previous provider's value must
+# not linger).
+#
+# Microsoft.Win32.Registry, not [Environment]::SetEnvironmentVariable: the latter
+# broadcasts WM_SETTINGCHANGE itself, with SMTO_NORMAL and a 1 s timeout, and
+# Windows charges that timeout to EVERY top-level window that is not pumping
+# messages. Measured on a machine holding one hung installer (9 such windows):
+# 9.1 s per variable, 27 s for a three-variable switch, against 14 ms for the
+# same write made directly. The writes stay here; Send-SettingsChanged does one
+# tolerant broadcast for all of them.
 function Set-RegValue([string]$Name, [string]$Value) {
     try {
-        if ([string]::IsNullOrEmpty($Value)) {
-            [System.Environment]::SetEnvironmentVariable($Name, $null, 'User')
-        } else {
-            [System.Environment]::SetEnvironmentVariable($Name, $Value, 'User')
-        }
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        if ($null -eq $key) { $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment') }
+        if ($null -eq $key) { return $false }
+        try {
+            if ([string]::IsNullOrEmpty($Value)) { $key.DeleteValue($Name, $false) }
+            else { $key.SetValue($Name, $Value, [Microsoft.Win32.RegistryValueKind]::String) }
+        } finally { $key.Close() }
         return $true
     } catch {
         return $false
     }
+}
+
+# One WM_SETTINGCHANGE for the whole write set, so a newly opened terminal picks
+# the values up. SMTO_ABORTIFHUNG (2) is the reason this is sent by hand: a window
+# whose thread is not pumping is skipped at once instead of costing the full
+# timeout, which is what makes the .NET broadcast above take seconds per call on a
+# machine with a hung app on the desktop. Ceiling: such a window gets no
+# notification, but it is not processing messages anyway.
+#
+# A failure here is swallowed rather than reported: the skill reads this
+# script's stdout, and a note printed above the `/bundle` line would read as
+# "the switch did not happen". The registry holds the right values either way.
+function Send-SettingsChanged {
+    try {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class BundleWin32 {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, string lParam,
+                                                    uint flags, uint timeout, out IntPtr result);
+}
+'@
+        $result = [IntPtr]::Zero
+        # HWND_BROADCAST 0xFFFF, WM_SETTINGCHANGE 0x001A, SMTO_ABORTIFHUNG 2
+        [void][BundleWin32]::SendMessageTimeoutW([IntPtr]0xFFFF, 0x001A, [IntPtr]::Zero, 'Environment', 2, 1000, [ref]$result)
+    } catch { }
 }
 
 # safe property access on a Dictionary or PSCustomObject that may be $null or
@@ -708,6 +745,8 @@ not enough.
     if ($failed.Count -gt 0) {
         Write-NotSwitched ('registry write failed for:' + ($failed -join ' '))
     }
+
+    Send-SettingsChanged
 
     Write-Output ('/bundle ' + $name)
     Write-Output ('  model ' + (Get-RegValue 'ANTHROPIC_MODEL'))
