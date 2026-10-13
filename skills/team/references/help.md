@@ -1,10 +1,11 @@
 # Help dialogue
 
-The help dialogue is one file where a stuck implementer asks the planner for help and
-the planner answers. It is `HELP.md`, in the handover directory beside `PLAN.md` and
-`REVIEW.md`. The watcher routes each entry: a request goes to the reviewer's pane, and
-the answer goes back to the implementer's pane. The watcher reads only the headings, so
-the format is fixed.
+The help dialogue is one file where a stuck implementer asks the reviewer for help and
+the reviewer answers. The reviewer is the orchestrator unless a reviewer pane is pinned.
+It is `HELP.md`, in the handover directory beside `PLAN.md` and `REVIEW.md`. The watcher
+routes each entry: a request goes to the reviewer (the orchestrator, or a pinned pane),
+and the answer goes back to the implementer's pane. The watcher reads only the headings,
+so the format is fixed.
 
 ## Entry format
 
