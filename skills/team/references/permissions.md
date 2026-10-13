@@ -20,6 +20,16 @@ Before the first implementer launches, add an allow rule for the TEMP directory 
 Use the TEMP path as Git Bash shows it (`echo $TEMP`). Keep the scope to TEMP: a rule
 for the home folder would let every project read outside its worktree.
 
+Add the run's handover root too, narrowly, when the project keeps its handover folder
+(`<main-repo>/.orca/**`). Without it, every handover write from an implementer raises an
+"Access external directory" dialog, and a dialog the watcher cannot clear stalls the job. The
+handover folder is already an allowed root for the watcher's policy, so this rule adds no reach
+the watcher does not already grant. The news skill uses this form.
+
+```jsonc
+"/Users/<name>/news/.orca/**": "allow"
+```
+
 A running session keeps the config it loaded. Restart an implementer to apply a change
 (see `orca-cli.md`, "Restart OpenCode and keep its session").
 
