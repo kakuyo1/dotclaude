@@ -94,7 +94,7 @@ if echo "$command" | grep -qE '\buv\s+run\b'; then
     interpreter="uv run"
     ext="py"
 elif echo "$command" | grep -qE '\bpython3?\b'; then
-    interpreter="python3"
+    interpreter="python -I"
     ext="py"
 elif echo "$command" | grep -qE '\b(bash|sh)\b'; then
     interpreter="bash"
@@ -108,7 +108,7 @@ fi
 if [ -d "${CLAUDE_PROJECT_DIR:-}/temp" ]; then
     tmp_dir="${CLAUDE_PROJECT_DIR}/temp"
 else
-    tmp_dir="/tmp"
+    tmp_dir="${TEMP:-/tmp}"
 fi
 
 tmp_file="${tmp_dir}/script_$$.${ext}"
@@ -117,8 +117,8 @@ case "$interpreter" in
     "uv run")
         example="Write(\"${tmp_file}\", <script>)  →  Bash(\"uv run ${tmp_file}\")"
         ;;
-    "python3")
-        example="Write(\"${tmp_file}\", <script>)  →  Bash(\"python3 ${tmp_file}\")"
+    "python -I")
+        example="Write(\"${tmp_file}\", <script>)  →  Bash(\"python -I ${tmp_file}\")"
         ;;
     "bash")
         example="Write(\"${tmp_file}\", <script>)  →  Bash(\"bash ${tmp_file}\")"

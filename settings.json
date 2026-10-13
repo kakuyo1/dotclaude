@@ -364,13 +364,13 @@
     }
   },
   "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-haiku-5-5": {
+      "effortLevel": "xhigh"
+    }
+  },
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-ansi",
-  "autoCompactEnabled": true,
-  "modelSettings": {
-    "claude-haiku-5-5": {
-      "effortLevel": "high"
-    }
-  }
+  "autoCompactEnabled": true
 }
