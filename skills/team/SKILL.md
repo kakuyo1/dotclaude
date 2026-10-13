@@ -1,6 +1,5 @@
 ---
 name: team
-disable-model-invocation: true
 description: >-
   Multi-job workflow inside Orca: one OpenCode implementer per job, with the
   orchestrator reviewing, for up to five jobs at once (bug fixes, docs, features).
