@@ -44,6 +44,7 @@ settings.json.txt
 skills/daily
 skills/scrapling/.venv/
 skills/casetomanualrecord
+skills/news/scripts/node_modules/
 
 CLAUDE.local.md
 

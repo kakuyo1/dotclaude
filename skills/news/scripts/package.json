@@ -1,0 +1,8 @@
+{
+  "name": "news-scripts",
+  "private": true,
+  "description": "Helper dependencies for the news skill. Run npm install once in this folder.",
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  }
+}

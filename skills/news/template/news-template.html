@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Digest {{DATE_ISO}}</title>
+<style>
+:root {
+  --canvas: #fdfcf3;
+  --surface: #ffffff;
+  --ink: #000000;
+  --caption: #6e6e6e;
+  --rule: #d9d9d9;
+  --serif: Plantin, Georgia, serif;
+  --page-max-width: 1200px;
+  --section-gap: 80px;
+}
+* { box-sizing: border-box; }
+html { background: var(--canvas); }
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.38;
+  overflow-wrap: break-word;
+}
+a { color: var(--ink); }
+a:hover, a:focus { text-decoration: underline; }
+.headline a { text-decoration: none; }
+.wrap {
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+.masthead { padding: 56px 0 40px; }
+.masthead h1 {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.masthead .date {
+  margin: 12px 0 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+}
+.nav {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.nav ul {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  padding: 14px 0;
+  list-style: none;
+}
+.nav a {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  text-decoration: none;
+}
+.nav .pipe { padding: 0 12px; }
+.section { padding-top: 48px; }
+.section + .section {
+  margin-top: var(--section-gap);
+  border-top: 1px solid var(--rule);
+}
+.section-name {
+  margin: 0 0 24px;
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--rule);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+}
+.card.lead { grid-column: span 2; padding: 20px; gap: 12px; }
+.card.span2 { grid-column: span 2; }
+.card.span3 { grid-column: span 3; }
+.eyebrow {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+}
+.headline {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.lead .headline { font-size: 28px; }
+.summary { margin: 0; }
+.meta, .also {
+  margin: 0;
+  font-size: 13px;
+  color: var(--caption);
+}
+.fig {
+  margin: 0;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.fig img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.fig.fig-lead { aspect-ratio: 16 / 9; }
+.fig.fig-card { aspect-ratio: 3 / 2; }
+@media (max-width: 767px) {
+  .grid { grid-template-columns: 1fr; }
+  .card.lead, .card.span2, .card.span3 { grid-column: span 1; }
+  .masthead { padding: 32px 0 24px; }
+  .section { padding-top: 32px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="masthead">
+<h1>Daily Digest</h1>
+<p class="date">{{DATE_LONG}}</p>
+</header>
+<nav class="nav">
+<ul>
+<li><a href="#international">International</a></li>
+<li><span class="pipe" aria-hidden="true">|</span></li>
+<li><a href="#technology">Technology</a></li>
+</ul>
+</nav>
+<!-- SECTION:international -->
+<!-- SECTION:technology -->
+</div>
+</body>
+</html>

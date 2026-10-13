@@ -2,7 +2,7 @@
 name: news
 disable-model-invocation: true
 description: >-
-  Two-track news digest built on the team workflow. Two jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR, Reuters via Google News) and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Ars Technica, Simon Willison's Weblog), each keeping 25-30 English items. The orchestrator removes duplicates and selects 20 stories, then a third team job builds one HTML page to DESIGN.md. The page is copied into the project the skill was triggered from, and the run's own branches and worktrees are deleted afterwards. Invoked by the user with /news.
+  Two-track news digest built on the team workflow. Two jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR) and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters and Ars Technica are off unless requested. The orchestrator removes duplicates and selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
 ---
 
 # Daily news digest
@@ -13,6 +13,15 @@ own work. This skill fixes the jobs, the handover formats, and the page; the tea
 itself is unchanged.
 
 Everything stays in English. Titles and summaries are not translated.
+
+Where things are:
+
+- `scripts/` fetches, parses, and checks feeds and links in parallel, and fills the page
+  template. Use these rather than writing new fetch code.
+- `template/news-template.html` is the page. Stage 3 fills it; it is not regenerated.
+- `references/crawl-workflow.md` is the crawl procedure and its timings.
+- `references/template.md` is how the template is filled, checked, and changed.
+- `references/pitfalls.md` lists what the runs got wrong, so it is not repeated.
 
 ## Sources
 
@@ -29,8 +38,11 @@ Everything stays in English. Titles and summaries are not translated.
 | Tech | Ars Technica | `https://feeds.arstechnica.com/arstechnica/index` |
 | Tech | Simon Willison's Weblog | `https://simonwillison.net/atom/everything/` |
 
-All ten feeds answered 200 through the proxy when this skill was written. The feeds are
-fetched through the proxy at `127.0.0.1:7890`; see the preflight in `run.md`.
+All ten feeds answered 200 through the proxy when this skill was written, but two sources are
+off by default because their articles cannot be reached on this machine: Reuters (its Google News
+links resolve to a 401 interstitial) and Ars Technica (its article pages are behind a WAF). Both
+are listed in `scripts/crawl_track.py` and run only with `--include-blocked`, which the user must
+ask for. The feeds are fetched through the proxy at `127.0.0.1:7890`; see the preflight in `run.md`.
 
 Quirks to plan for:
 
@@ -60,29 +72,39 @@ Start one team run with two jobs: `news-international` and `news-tech`. Each job
 worktree and implementer. Neither worktree receives a commit: the crawl writes only to the
 handover folder.
 
-Each job's `PLAN.md` carries these rules, with the job's own source list substituted:
+The implementer does not write fetching code and does not write `CANDIDATES.md` by hand. It runs
+three commands and writes one JSON file. The commands are fixed in the PLAN, and the procedure is
+in [references/crawl-workflow.md](references/crawl-workflow.md). A PLAN that asks for its own
+fetcher is wrong: say so and use the scripts.
 
-- Fetch the feeds with `curl -sS -x http://127.0.0.1:7890`, writing each response to a file.
-  Check that the body is XML before parsing it, since an error page comes back as a 200.
-- Keep items published within the last 48 hours. If the track ends up under 25 items, widen to
-  the feed's full list and say so.
-- At most 8 items per source. Rank within each source by feed order (front page for Hacker
-  News and Techmeme). Across the track, keep the 25 to 30 items with the most attention. Stop
-  at 30 even if more qualify.
-- Summarise from the article, not the title. When the feed's description is under two
-  sentences of substance, fetch the article page once through the proxy and summarise from it.
+The PLAN gives the implementer these steps, with the job's track substituted:
+
+1. `python scripts/crawl_track.py --track <international|tech> --handover <handover>`. It fetches
+   the feeds, applies the 48-hour window, the 8-per-source cap, and the round-robin order (stops
+   at 30), widens to the full list when fewer than 25 remain, and fetches article pages. It writes
+   `items.json`. Blocked sources are off unless the user asks for them (`--include-blocked`).
+2. Read `items.json`. For each item, write a summary from its `text` field, not the title, and
+   store it in `summaries.json` as `{"<id>": "<summary>"}`. Summaries are for the items the
+   implementer keeps; at least 25 must have one.
+3. `python scripts/build_candidates.py <handover>`. It checks each Link and Image through the
+   proxy and writes `CANDIDATES.md`.
+
+The summary rules are the implementer's to follow:
+
 - Each summary is 1 to 3 sentences, 60 words at most. It states only facts the source gives,
   keeps the source's own figures and attribution, and adds no context from memory and no
   adjectives such as "groundbreaking".
-- Titles are verbatim. Replace an em dash or en dash with a hyphen, and write any other
-  non-ASCII character as an HTML entity (for example `&eacute;`), so the file stays ASCII.
-- Images come only from the feed (`media:thumbnail`, `media:content`, `enclosure`) or the
-  article's `og:image` tag. Otherwise write `none`. Never construct an image URL.
-- Before reporting, every Link and Image responds 200 through the proxy. A URL that fails
-  once is retried once. Anything still failing is written as `unverified`, not dropped
-  silently.
+- If an item's `text` is empty, summarise from `description`. If both are empty or only a
+  headline, leave the item out of `summaries.json`.
 
-Each item in `CANDIDATES.md` in the handover folder uses this block, in this order:
+`build_candidates.py` owns everything else, so the implementer does not copy fields by hand:
+
+- Titles and summaries become ASCII: dashes become hyphens and other characters become entities.
+- Image is the feed image if it answers 200, else the `og:image` if that does, else `none` when no
+  URL exists, or `unverified` when URLs exist but none answer. No image URL is constructed.
+- A Link that fails after one retry drops its item, and the drop is listed in the output.
+
+The block format it writes is:
 
 ```
 ## 1
@@ -91,20 +113,23 @@ Source: BBC News
 Title: <verbatim English title>
 Published: <as the feed states it>
 Link: <article URL>
-Image: <image URL> | none
+Image: <image URL> | none | unverified
 Summary: <1-3 sentences>
 ```
 
 Tech items may add a `Discussion:` line with the Hacker News comments URL.
 
-The job's `IMPLEMENTATION.md` is a short report: item count, sources used, any source that was
-empty or failed and what replaced it, any Google News link left unresolved, and anything
-skipped.
+A crawl job's `IMPLEMENTATION.md` is a short paste of the three commands' output, not a report
+to review. The orchestrator does not read it. The mechanical checks replace the review:
 
-When the watcher shows `ACTION: Review requested` for a crawl job, the orchestrator checks
-`CANDIDATES.md` itself: 25 to 30 blocks, every field present, ASCII only, and five randomly
-chosen links re-fetched through the proxy. Then it writes `REVIEW.md`. Crawl reports have no
-diff, so the worktree check is `git status --short` returning nothing.
+- `scripts/check_candidates.py CANDIDATES.md` checks the block count, the fields, ASCII, the
+  dashes, and the summary length.
+- `scripts/check_urls.py CANDIDATES.md` rechecks every Link and Image through the proxy.
+
+When the watcher shows `ACTION: Review requested` for a crawl job, the orchestrator runs both
+checks, writes `REVIEW.md` with the results, and does not read the implementer's report. A failing
+check is a finding. Crawl reports have no diff, so the worktree check is `git status --short`
+returning nothing.
 
 ## Stage 2: dedupe and select (orchestrator)
 
@@ -132,70 +157,60 @@ Also covered by: <Source> <link>; <Source> <link>
 
 Omit the `Also covered by:` line when there is no duplicate.
 
-## Stage 3: the page (team run, one job)
+## Stage 3: the page (from the template, no team run)
 
-Start a second team run with one job, `news-html`. The job works in its own worktree and
-writes a single HTML file there. The handover folder receives the design file as well:
+The page is built from `template/news-template.html`, the approved 2026-10-13 page with its
+stories removed. The orchestrator fills it from `SELECTED.md` with a script, so no agent writes
+HTML and no team run is needed. The design and the template are described in
+[references/template.md](references/template.md).
 
-- Copy `references/DESIGN.md` to `<handover>/news-html/DESIGN.md`. The implementer reads the
-  copy from the handover folder, which the watcher always allows, so no permission prompt
-  fires.
-- Write `SELECTED.md` there (stage 2).
+1. Write `SELECTED.md` into `<project>/.orca/team/news-html/` (stage 2).
+2. Fill the template. It writes into the project root, so no worktree is needed.
 
-The `PLAN.md` for `news-html` states:
+   ```bash
+   node ~/.claude/skills/news/scripts/fill_template.mjs \
+     --selected <project>/.orca/team/news-html/SELECTED.md \
+     --date <YYYY-MM-DD> --out <project>/news-<YYYY-MM-DD>-<HHMM>.html
+   ```
 
-- **Scope.** One self-contained file, `news-<date>.html`, at the worktree root, built only from
-  `SELECTED.md`. Nothing else is created, and nothing is committed.
-- **Design.** DESIGN.md is the authority. Where a general taste rule and DESIGN.md differ
-  (serif type, eyebrow labels, 8px radii, light-only theme), DESIGN.md wins.
-- **Layout.** A 1200px maximum container. A masthead reading "Daily Digest" with the date. A
-  pipe-separated nav row that links to the two sections. Two sections, International (ranks
-  of the International stories, in rank order) then Technology. Within each section the first
-  story is the lead, two columns wide. The rest form a grid of equal cards separated by 1px
-  rules, arranged so that no cell is empty. Below 768px everything collapses to one column.
-- **Type.** Plantin first, then Georgia, then `serif`, because Plantin is not installed on
-  most machines. Headlines 28px for leads and 20px for cards, body 16px, eyebrows 13px uppercase
-  with 0.075em tracking, negative tracking on headlines. Navigation in Helvetica Neue, Arial,
-  `sans-serif`.
-- **Colour.** Canvas `#fdfcf3`, text `#000000`, secondary text `#6e6e6e`, rules `#d9d9d9`, card
-  surfaces `#ffffff`. Do not use `#b3b3b3` for any text that carries information: it fails
-  contrast. Do not use `#ffc500`: DESIGN.md reserves it for the subscribe button, radio card,
-  and illustrations, and this page has none of them.
-- **Shape and depth.** 0px radius everywhere except image containers, which use 8px. No drop
-  shadows. Light theme only.
-- **Story content.** The eyebrow is the source name. The headline is the title, linked to the
-  article. Then the summary, the published date as the feed gives it, and the `Also covered by`
-  links where present. No read time: the source does not supply one, so do not invent it.
-- **Images.** `<img>` with `loading="lazy"`, `referrerpolicy="no-referrer"`, the title as `alt`,
-  and a fixed aspect-ratio box, so loading does not shift the layout. A story with `Image: none`
-  has no image box and no placeholder graphic.
-- **Copy rules.** Visible text is only the summaries, titles, and fixed labels. No em dash or
-  en dash anywhere in visible text. No emoji, no scroll cues, no version or build labels, no
-  decorative dots.
-- **Self-contained.** No external stylesheet, script, or font file. Images are hot-linked from
-  their sources.
+   The script refuses to overwrite an existing file. Time from `date +%H%M`.
+3. Screenshot and check the page. `shoot_page.mjs` writes `desktop.png` (1280px) and `mobile.png`
+   (390px) into the handover folder, and checks image boxes and horizontal overflow. Exit 0 is
+   required.
 
-Acceptance criteria the implementer runs and reports with real output:
+   ```bash
+   node ~/.claude/skills/news/scripts/shoot_page.mjs \
+     --page <project>/news-<YYYY-MM-DD>-<HHMM>.html --out <project>/.orca/team/news-html
+   ```
 
-1. Exactly 20 story articles: `grep -c '<article' news-<date>.html` prints `20`.
-2. No em dash or en dash in the file: `grep -c $'\xe2\x80\x94' news-<date>.html` and
-   `grep -c $'\xe2\x80\x93' news-<date>.html` both print `0`.
-3. Two screenshots, `desktop.png` at 1280px and `mobile.png` at 390px, saved to the handover
-   folder. Set the width through the DevTools protocol (`Emulation.setDeviceMetricsOverride`)
-   or a Playwright viewport. Do not use `--window-size`: on Windows it clamps below about
-   500px and crops the narrow capture. At 390px, `document.documentElement.scrollWidth` must
-   equal `innerWidth`, so nothing overflows horizontally.
-4. Each image that is not `none` either loads or sits in its fixed box with no layout shift.
+4. Check the page's own rules: `grep -c '<article'` must print 20; the dash and non-ASCII
+   counts must be 0; no `<script`, `<link`, or `@font-face`. The filler enforces the dashes,
+   placeholders, and ASCII on its output, so these checks confirm rather than discover.
+5. Open both screenshots with the Read tool, spot-check three story links through the proxy, and
+   write `REVIEW.md` in the handover folder.
 
-The orchestrator then opens both screenshots with the Read tool, checks the layout at both
-widths, spot-checks three story links, and writes `REVIEW.md`. The HTML stays in the worktree
-until the delivery step copies it out.
+The page is written straight into the project root, so there is no worktree to copy from. It is
+uncommitted until the user says otherwise (see Delivery).
+
+Design calls are fixed by the template: Plantin falls back to Georgia; cards and the lead sit on
+white; no yellow accent; light-only. To change the design, edit the template, not the generated
+page, and run the regression check in references/template.md.
 
 ## Monitoring
 
-The watcher cannot wake the orchestrator. While a stage runs, read `watcher.log` at each
-check, and schedule the next check with ScheduleWakeup in intervals under 270 seconds. A
-stage that finishes while the user is away would otherwise wait.
+The watcher cannot wake the orchestrator, and sleep-and-check loops miss events between checks. While
+a stage runs, start a background wait instead. It exits on the next `ACTION:` or `Finished:` line
+added to `watcher.log`, and the exit notifies the orchestrator at once. Lines already in the log
+are skipped, because the log is shared across runs:
+
+```bash
+LOG=<project>/.orca/team/watcher.log; N=$(wc -l < "$LOG")
+for i in $(seq 1 120); do tail -n +$((N+1)) "$LOG" | grep -qE 'ACTION:|Finished:' && break; sleep 15; done
+tail -n +$((N+1)) "$LOG"
+```
+
+Run it with `run_in_background`. Each `ACTION:` line ends the wait, so handle it and start the wait
+again. The 120 iterations cap the wait at 30 minutes.
 
 ## Delivery and cleanup
 
@@ -203,17 +218,17 @@ Run this only after stage 3 passes its checks and the orchestrator has reviewed 
 run that stopped before delivery keeps its worktrees and branches, and the report names the
 stage that stopped. Whether to delete failed work is the user's call.
 
-1. Copy the page. Copy the worktree's `news-<date>.html` to the project root as
-   `news-<date>-<HHMM>.html` (time from `date +%H%M`). Never overwrite an existing file. Run
-   `cmp` to confirm the copy matches the worktree file. Leave the copy uncommitted.
+1. The page is already in the project root from stage 3, uncommitted. Confirm the file exists
+   and that `git -C <project> status --short` lists only it.
 2. Remove the worktrees. For each worktree in `news-run.json`, run
    `orca worktree rm --worktree id:<id> --force --json`. Orca removes the worktree and its local
-   branch. `--force` is needed because the run leaves untracked files behind. Orca keeps any
-   branch it cannot prove merged, which step 3 handles.
-3. Delete the branches. For each branch in the manifest that still exists
-   (`git -C <project> rev-parse --verify --quiet refs/heads/<branch>`), run
-   `git -C <project> branch -D <branch>`. These are the run's own unmerged branches, and only
-   branches named in the manifest are deleted.
+   branch when it can prove the branch merged. `--force` is needed because the run leaves
+   untracked files behind.
+3. Branches that Orca keeps are unmerged. Do not delete them with `git branch -D` from this
+   skill: the run's hook refuses that command, and deleting unmerged work is the user's call.
+   List the manifest branches that still exist
+   (`git -C <project> rev-parse --verify --quiet refs/heads/<branch>`) and ask the user before
+   removing any. Only branches named in the manifest are ever candidates.
 4. Verify. `git -C <project> worktree list` and `git -C <project> branch --list` must show no
    manifest entry. Report the output.
 
@@ -225,13 +240,13 @@ and the screenshots, which are the record of how the page was built.
 Give the user:
 
 - the path to the HTML file in the project root
-- what cleanup removed: the worktrees and branches from the manifest, and the handover folder
-  that stayed
+- what cleanup removed: the worktrees from the manifest, the branches Orca removed, the branches
+  still present and waiting for the user, and the handover folder that stayed
 - the count per track, and the stories removed as duplicates
-- any feed that was empty or failed, and what replaced it
-- any Google News link left unresolved, and any image marked `unverified`
-- the design calls made: Plantin falls back to Georgia on machines without it; no yellow
-  accent, since the page has no subscribe button or radio card; the layout ran light-only
+- any feed that failed, what replaced it, and the output of `check_urls.py` for any `unverified`
+  image or failed link
+- the design calls made, which are fixed in the template: Plantin falls back to Georgia; no
+  yellow accent, since the page has no subscribe button or radio card; the layout is light-only
   because DESIGN.md is light
 
 Stop at this point. Committing or publishing the page is outward-facing, so it waits for the
