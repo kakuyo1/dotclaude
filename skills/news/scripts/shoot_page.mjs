@@ -2,8 +2,9 @@
 // Check and screenshot the news page in headless Chrome, driven over the DevTools protocol.
 //
 // Usage: node shoot_page.mjs --page <news-YYYY-MM-DD-HHMM.html> --out <dir>
-//          [--chrome <chrome.exe>] [--port 9388]
+//          [--chrome <path>] [--port 9388]
 //
+// Chrome is --chrome, else $CHROME_PATH, else the first chrome, chromium, or msedge found on PATH.
 // Writes <dir>/desktop.png (1280px) and <dir>/mobile.png (390px). Prints:
 //   - image load status, and whether any image box changes size once images load
 //   - whether the page overflows horizontally at 390px
@@ -12,25 +13,39 @@
 // Setup, once: cd <skill>/scripts && npm install
 
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { PNG } from "pngjs";
+
+const CHROME_NAMES = ["chrome", "google-chrome", "chromium", "chromium-browser", "msedge"];
+
+function findChrome() {
+  const exts = process.platform === "win32" ? ["", ".exe"] : [""];
+  for (const dir of (process.env.PATH || "").split(delimiter)) {
+    for (const name of CHROME_NAMES) {
+      for (const ext of exts) {
+        const candidate = join(dir, name + ext);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  }
+  return null;
+}
 
 const { values } = parseArgs({
   options: {
     page: { type: "string" },
     out: { type: "string" },
-    chrome: {
-      type: "string",
-      default: "C:/Users/admin/AppData/Local/ms-playwright/chromium-1248/chrome-win64/chrome.exe",
-    },
+    chrome: { type: "string" },
     port: { type: "string", default: "9388" },
   },
 });
 if (!values.page || !values.out) throw new Error("--page and --out are required");
+const CHROME = values.chrome || process.env.CHROME_PATH || findChrome();
+if (!CHROME) throw new Error("no Chrome found: pass --chrome or set CHROME_PATH");
 
 const PAGE = pathToFileURL(resolve(values.page)).href;
 const OUT = resolve(values.out);
@@ -43,7 +58,7 @@ const profile = mkdtempSync(join(tmpdir(), "news-shoot-"));
 
 // The hot-linked images need the local proxy. A fresh headless profile does not inherit
 // the Windows system proxy, so it is passed explicitly.
-const proc = spawn(values.chrome, [
+const proc = spawn(CHROME, [
   "--headless=new",
   `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${profile}`,
@@ -65,7 +80,7 @@ for (let i = 0; i < 80; i++) {
   } catch {}
   await sleep(250);
 }
-if (!wsUrl) { console.error("no CDP target: check --chrome and --port"); process.exit(1); }
+if (!wsUrl) { console.error("no CDP target: check the Chrome path and --port"); process.exit(1); }
 
 const ws = new WebSocket(wsUrl);
 await new Promise((r) => ws.addEventListener("open", r, { once: true }));

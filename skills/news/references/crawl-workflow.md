@@ -1,86 +1,61 @@
-# Crawl workflow: from feeds to CANDIDATES.md
+# Crawl workflow
 
-The implementer runs three commands and writes one JSON file. Everything else is inside the
-scripts. Run them from the skill's `scripts/` folder. The handover folder is passed as the
-argument, so no path is typed by hand.
+What `crawl_track.py` guarantees, what the implementer does, and what the scripts measured.
 
-## Setup, once
+## What the crawl does
 
-```bash
-cd ~/.claude/skills/news/scripts && npm install
-```
+1. Fetches the track's feeds in parallel through the proxy. Blocked sources are skipped unless
+   `--include-blocked` is given.
+2. Keeps items published in the last 48 hours (UTC). `--since` sets the window explicitly.
+3. Orders candidates round-robin across sources: rank 1 of each source, then rank 2, up to 8 per
+   source in the first pass.
+4. Fetches each candidate's article page, retrying once on a non-200 answer. An item is kept only
+   when its page answers 200 and its text has at least 25 words. Text comes from the page's
+   `<article>` body, else its description, else every paragraph on the page. The list stops at 30.
+5. If the first pass keeps fewer than 25 items, it tries the rest of the in-window items and sets
+   `widened`.
+6. Writes `items.json` with the kept items only. Each item has `article_http` and `text`.
 
-`npm install` is only needed for the screenshot script. The crawl needs Python alone.
+It prints one line per source: `kept`, `link_failed`, and `no_text`. Exit 1 means fewer than 25 items
+were kept after widening.
 
-## Steps
+## Steps for the implementer
 
-1. **Crawl the track.** This fetches the feeds in parallel, applies the window and caps, and
-   fetches the article pages it needs. It writes `items.json` into the handover folder.
+The plan from `write_crawl_job.py` gives these steps in order:
 
-   ```bash
-   python scripts/crawl_track.py --track international --handover "$HANDOVER"
-   python scripts/crawl_track.py --track tech --handover "$HANDOVER"
-   ```
+1. `crawl_track.py --track <track> --handover <folder>`
+2. Write `summaries.json`, one entry per item, from its `text` field: `{"<id>": "<summary>"}`.
+   Save it as UTF-8 without a BOM. Summaries follow the rules in SKILL.md.
+3. `build_candidates.py <folder>`. It reuses the Link result from step 1 and checks each image through
+   the proxy. It writes `CANDIDATES.md`.
+4. `check_candidates.py <folder>/CANDIDATES.md`. Below 25 blocks it prints FAIL, which is the expected
+   result of a short crawl.
 
-   The 48-hour window ends at the run's start, computed in UTC. Use `--since` to set it
-   explicitly. Use `--include-blocked` only when the user asks for Reuters or Ars Technica.
+The implementer writes no report. `CANDIDATES.md` is its only deliverable, and the per-source counts
+come from the `sources` list in `items.json`.
 
-   The output lists each source's status: `ok`, `failed`, or `skipped`. Exit 1 means fewer than
-   25 items remain after widening. Report that; do not curate a thin list.
+## Checks
 
-2. **Write the summaries.** Read `items.json`. For each item, write 1 to 3 sentences, at most 60
-   words, from its `text` field. If `text` is empty, use `description`. Save the result as
-   `summaries.json` in the same folder, keyed by item id:
-
-   ```json
-   {"1": "Summary for item 1.", "2": "Summary for item 2."}
-   ```
-
-   Leave an item out when it has no usable text. Keep at least 25 summaries.
-
-3. **Build the candidate list.** This checks each Link and Image through the proxy, retries once,
-   and writes `CANDIDATES.md`:
-
-   ```bash
-   python scripts/build_candidates.py "$HANDOVER"
-   ```
-
-   It prints any dropped items (a Link that still fails) and any `unverified` images. Those
-   counts go into the job's IMPLEMENTATION.md.
-
-## What the orchestrator checks
-
-The orchestrator does not read the implementer's report. It runs the two checks:
-
-```bash
-python scripts/check_candidates.py "$HANDOVER/CANDIDATES.md"
-python scripts/check_urls.py "$HANDOVER/CANDIDATES.md"
-```
-
-Both must exit 0. A failure is a finding in REVIEW.md.
+- `check_candidates.py CANDIDATES.md`: the implementer's last check, not an orchestrator review. Block
+  count 25 to 30, fields, ASCII, no dashes, summaries at most 60 words.
+- `test_extract.py [items.json]`: offline check of the text extraction. With an `items.json`, it also
+  asserts that every kept item has `article_http` 200 and at least 25 words of text.
 
 ## Measured timings
 
-Measured on the 2026-10-13 run, through the proxy:
+Measured through the proxy on 2026-10-13, with the crawl alone:
 
-| Step | Time |
-| --- | --- |
-| 12 feeds, parallel | a few seconds |
-| 16 article pages, parallel (8 workers) | 10 s |
-| 30 links and 24 images, parallel | 17 s |
-| Full crawl_track.py, international | 10 s |
-| Full crawl_track.py, tech | 8 s |
-| build_candidates.py, 30 items | 7 to 11 s |
-| Screenshot run, two widths | 45 s |
+| Track | Crawl time | Items kept |
+| --- | --- | --- |
+| International | 2 to 4 s | 30 |
+| Tech | 6 to 9 s | 24 (Techmeme 15 of 15 dropped, Hacker News 21 of 28 kept) |
 
-The first run's two crawl jobs ran from about 15:10 to 15:37 by the watcher log. Their per-step
-times were not recorded, so no before/after figure is claimed. The slow part was the agents
-restarting after failed commands and waiting on their own serial loops, not the network.
+Tech stayed at 24 because the 48-hour window has no more usable items. The run before this change
+finished its Tech job about four minutes after the International job: the implementer summarised items
+whose Links were dead, then stopped to ask for help about the short list.
 
 ## What the scripts do not do
 
-- Pick the 25 to 30 items beyond the round-robin order. The order is the stated rule, and it
-  favours feed rank over editorial weight. Stage 2 is where editorial choices are made.
-- Write summaries. The 60-word limit is checked by `build_candidates.py`, but the content is not.
-- Resolve Google News links. The Reuters track is off by default (see pitfalls.md), so no resolver
-  is kept.
+- Widen the time window. Ask the user first.
+- Judge the content of a summary. Summaries are the implementer's, and `check_candidates.py` checks their shape.
+- Resolve Google News links. Reuters stays off by default (see `pitfalls.md`).

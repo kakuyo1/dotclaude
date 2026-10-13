@@ -5,16 +5,16 @@ Usage: python crawl_track.py --track international|tech --handover DIR [--since 
            [--work DIR] [--include-blocked]
 
 Fetches the track's feeds in parallel and keeps items published on or after --since (default:
-48 hours ago). Takes up to 8 items per source, in feed order. Sources are interleaved round-robin
-(rank 1 of each source, then rank 2, and so on), so no source fills the list, and the list stops
-at 30. If fewer than 25 items remain, it widens to every in-window item of each feed and records
-that. The article page is fetched for each item whose feed description is too short to summarise
-from. Writes HANDOVER/items.json.
+48 hours ago). Candidates are taken round-robin across sources (rank 1 of each source, then rank 2,
+and so on), at most 8 per source in the first pass. Each candidate's article page is fetched, and it
+is kept only when its Link answers 200 and its text has at least MIN_WORDS words. The list stops at
+30 kept items. If the first pass keeps fewer than 25, the rest of the in-window items are tried and
+the run is marked widened. Only kept items reach items.json, so the implementer never summarises a
+dead link or an empty page. Writes HANDOVER/items.json.
 
-Sources marked blocked in SOURCES are skipped unless --include-blocked is given. They fail through
-the proxy on this machine (see references/pitfalls.md).
+Sources marked blocked in SOURCES are skipped unless --include-blocked is given.
 
-Exit 1 when fewer than 25 items remain after widening.
+Exit 1 when fewer than 25 items are kept after widening.
 """
 import argparse
 import json
@@ -29,11 +29,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import fetch_articles  # noqa: E402
 import fetch_feeds  # noqa: E402
+from fetch_articles import MIN_WORDS  # noqa: E402
 from parse_feeds import ATOM, atom_items, parse_date, rss_items  # noqa: E402
 
 TRACK_LABEL = {"international": "International", "tech": "Tech"}
 MIN_ITEMS, MAX_ITEMS, PER_SOURCE = 25, 30, 8
-SHORT_WORDS = 35
 REUTERS = "https://news.google.com/rss/search?q=when:24h+site:reuters.com&hl=en-US&gl=US&ceid=US:en"
 
 # (source name, file key, feed URL, blocked on this machine)
@@ -72,14 +72,38 @@ def in_window(raw, since):
     return kept
 
 
-def interleave(per_source, depth):
-    """Round-robin across sources, rank by rank, up to depth items per source, at most MAX_ITEMS."""
-    picked = []
-    for rank in range(depth):
-        for source, items in per_source:
-            if rank < len(items):
-                picked.append((source, items[rank]))
-    return picked[:MAX_ITEMS]
+def interleave(per_source):
+    """Rank-major order across sources as (depth, source, item). A prefix of it is the capped first pass."""
+    depth = max((len(items) for _, items in per_source), default=0)
+    return [(rank, name, items[rank]) for rank in range(depth) for name, items in per_source if rank < len(items)]
+
+
+def fetch_checked(row, articles_dir):
+    page = fetch_articles.work(row["cand"], row, articles_dir)
+    if page["http"] != "200":
+        page = fetch_articles.work(row["cand"], row, articles_dir)
+    return page, page["text"] or row["description"]
+
+
+def evaluate(rows, kept, stats, articles_dir):
+    """Fetch rows in batches until MAX_ITEMS are kept, and append the usable ones to kept."""
+    pos = 0
+    while pos < len(rows) and len(kept) < MAX_ITEMS:
+        batch = rows[pos:pos + max(8, 2 * (MAX_ITEMS - len(kept)))]
+        pos += len(batch)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            fetched = list(pool.map(lambda r: fetch_checked(r, articles_dir), batch))
+        for row, (page, text) in zip(batch, fetched):
+            if len(kept) >= MAX_ITEMS:
+                break
+            s = stats[row["source"]]
+            if page["http"] != "200":
+                s["link_failed"] += 1
+            elif len(text.split()) < MIN_WORDS:
+                s["no_text"] += 1
+            else:
+                s["kept"] += 1
+                kept.append(dict(row, page=page, text=text))
 
 
 def main():
@@ -106,7 +130,7 @@ def main():
     with ThreadPoolExecutor(max_workers=len(sources)) as pool:
         fetched = list(pool.map(lambda s: fetch_feeds.fetch(s[1], s[2], feeds_dir), sources))
 
-    per_source = []
+    per_source, stats = [], {}
     for (name, key, _url, _blocked), (_k, code, _size, _xml, ok, note) in zip(sources, fetched):
         if not ok:
             report.append({"source": name, "status": f"failed: http={code} {note}".strip()})
@@ -114,49 +138,52 @@ def main():
         raw = load_feed(os.path.join(feeds_dir, key + ".xml"))
         win = in_window(raw, since)
         per_source.append((name, win))
+        stats[name] = {"kept": 0, "link_failed": 0, "no_text": 0}
         report.append({"source": name, "status": "ok", "feed_items": len(raw), "in_window": len(win)})
 
-    picked = interleave(per_source, PER_SOURCE)
-    widened = False
-    if len(picked) < MIN_ITEMS:
-        picked = interleave(per_source, max((len(w) for _, w in per_source), default=0))
-        widened = True
+    ordered = [dict(item, source=name, depth=depth, cand=i)
+               for i, (depth, name, item) in enumerate(interleave(per_source), start=1)]
+    first = [r for r in ordered if r["depth"] < PER_SOURCE]
+    rest = ordered[len(first):]
 
-    rows = [dict(item, source=name, id=i) for i, (name, item) in enumerate(picked, start=1)]
-    need = [r for r in rows if len(r["description"].split()) < SHORT_WORDS]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        pages = list(pool.map(lambda r: fetch_articles.work(r["id"], r, articles_dir), need))
-    by_id = {p["index"]: p for p in pages}
+    kept = []
+    evaluate(first, kept, stats, articles_dir)
+    widened = len(kept) < MIN_ITEMS and bool(rest)
+    if widened:
+        evaluate(rest, kept, stats, articles_dir)
 
-    items = []
-    for r in rows:
-        page = by_id.get(r["id"])
-        text = page["text"] if page and page["text"] else r["description"]
-        items.append({
-            "id": r["id"],
-            "track": TRACK_LABEL[args.track],
-            "source": r["source"],
-            "title": r["title"],
-            "published": r["published"],
-            "published_utc": r["published_utc"],
-            "link": r["link"],
-            "discussion": r["discussion"],
-            "feed_image": r["image"],
-            "og_image": page["og_image"] if page else "",
-            "text": text,
-            "article_http": page["http"] if page else None,
-        })
+    items = [{
+        "id": n,
+        "track": TRACK_LABEL[args.track],
+        "source": row["source"],
+        "title": row["title"],
+        "published": row["published"],
+        "published_utc": row["published_utc"],
+        "link": row["link"],
+        "discussion": row["discussion"],
+        "feed_image": row["image"],
+        "og_image": row["page"]["og_image"],
+        "text": row["text"],
+        "article_http": row["page"]["http"],
+    } for n, row in enumerate(kept, start=1)]
 
+    for entry in report:
+        entry.update(stats.get(entry["source"], {}))
     out = {"track": TRACK_LABEL[args.track], "since": since.strftime("%Y-%m-%dT%H:%M:%SZ"),
            "widened": widened, "sources": report, "items": items}
-    with open(os.path.join(args.handover, "items.json"), "w", encoding="utf-8") as f:
+    path = os.path.join(args.handover, "items.json")
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
 
     for row in report:
-        print(f"  {row['source']:<20} {row['status']}"
-              + (f"  feed_items={row['feed_items']} in_window={row['in_window']}" if "feed_items" in row else ""))
+        line = f"  {row['source']:<20} {row['status']}"
+        if "feed_items" in row:
+            line += (f"  feed_items={row['feed_items']} in_window={row['in_window']} kept={row['kept']}"
+                     f" link_failed={row['link_failed']} no_text={row['no_text']}")
+        print(line)
+    fetched_pages = sum(s["kept"] + s["link_failed"] + s["no_text"] for s in stats.values())
     print(f"{TRACK_LABEL[args.track]}: {len(items)} items, widened={widened}, "
-          f"article pages fetched={len(need)} -> {os.path.join(args.handover, 'items.json')}")
+          f"article pages fetched={fetched_pages} -> {path}")
     sys.exit(0 if len(items) >= MIN_ITEMS else 1)
 
 

@@ -6,8 +6,8 @@ Usage: python build_candidates.py HANDOVER
 summaries.json maps each item id (a string) to its summary: 1 to 3 sentences, at most 60 words.
 An item without a summary is left out. Blocks follow items.json order and are numbered 1..N.
 
-Link: must answer 200 through the proxy (one retry). An item whose Link still fails is dropped and
-listed. Image: the feed image if it answers 200, else the og:image if that does, else "none" when
+Link: the article_http that crawl_track.py recorded, or a check through the proxy (one retry) when
+that is missing. An item whose Link fails is dropped and listed. Image: the feed image if it answers 200, else the og:image if that does, else "none" when
 no image URL exists, or "unverified" when URLs exist but none answer. Titles and summaries are
 ASCII: dashes become hyphens, other non-ASCII characters become numeric entities.
 """
@@ -30,7 +30,7 @@ def ascii_text(s):
 
 
 def check_item(item):
-    if check(item["link"]) != "200":
+    if item.get("article_http") != "200" and check(item["link"]) != "200":
         return {"link_ok": False, "image": None}
     urls = [u for u in (item.get("feed_image"), item.get("og_image")) if u]
     image = "none"

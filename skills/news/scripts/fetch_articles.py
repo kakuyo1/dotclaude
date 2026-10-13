@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 PROXY = "http://127.0.0.1:7890"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 TEXT_LIMIT = 1400
+MIN_WORDS = 25
 
 
 def get(url, out_path):
@@ -47,11 +48,7 @@ def meta(page, prop):
     return ""
 
 
-def body_text(page):
-    seg = page
-    m = re.search(r"(?is)<article[^>]*>.*?</article>", page)
-    if m and len(m.group(0)) > 500:
-        seg = m.group(0)
+def paragraphs(seg):
     seg = re.sub(r"(?is)<(script|style|nav|header|footer|aside|form)[^>]*>.*?</\1>", " ", seg)
     paras = []
     total = 0
@@ -65,6 +62,19 @@ def body_text(page):
         if total > TEXT_LIMIT:
             break
     return " ".join(paras)[:TEXT_LIMIT]
+
+
+def body_text(page):
+    # <article>, then the page's own description, then every paragraph on the page. A whole-page
+    # scan is the last resort: on some pages (arXiv) it picks up navigation text instead.
+    m = re.search(r"(?is)<article[^>]*>.*?</article>", page)
+    candidates = [paragraphs(m.group(0))] if m else []
+    candidates.append(meta(page, "og:description") or meta(page, "description"))
+    candidates.append(paragraphs(page))
+    for text in candidates:
+        if len(text.split()) >= MIN_WORDS:
+            return text
+    return candidates[-1]
 
 
 def work(index, item, out_dir):
