@@ -4,15 +4,21 @@
 Usage: python check_candidates.py FILE.md [--min 25] [--max 30]
 
 Checks: block count within --min..--max, numbering 1..N with no gaps, every block has
-Track, Source, Title, Published, Link, Image and Summary, Track is International or Tech,
+Track, Source, Title, Published, Link, Image and Summary, Track is a label from tracks.TRACKS,
 summaries are at most 60 words, the file is ASCII, and there are no em or en dashes.
 Prints one line per failed check. Exit 1 if any check fails.
 """
 import argparse
+import os
 import re
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from tracks import TRACKS  # noqa: E402
+
 REQUIRED = ("Track", "Source", "Title", "Published", "Link", "Image", "Summary")
+LABELS = {t["label"] for t in TRACKS.values()}
 
 
 def main():
@@ -45,7 +51,7 @@ def main():
         missing = [f for f in REQUIRED if f not in fields]
         if missing:
             problems.append(f"block {n} missing {', '.join(missing)}")
-        if fields.get("Track") not in ("International", "Tech"):
+        if fields.get("Track") not in LABELS:
             problems.append(f"block {n} Track is {fields.get('Track')!r}")
         words = len(fields.get("Summary", "").split())
         if words > 60:

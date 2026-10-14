@@ -27,6 +27,16 @@ about it. Read it before changing a script or a feed list.
 - **Reuters through Google News.** The Google News links resolve to a DataDome 401 page. Reuters is off
   by default. Do not spend time on the resolver again unless Reuters has a new access path.
 - **Ars Technica article pages** return 405 or 403 behind an AWS WAF challenge. Ars is off by default.
+- **Financial Times article pages** return 403 with a "Security Verification" challenge page through the
+  proxy. The FT feed itself is fine: 200 and XML, 25 items on 2026-10-14. The same class of block as Ars,
+  so FT is blocked in `tracks.py` and off by default, like Reuters and Ars.
+- **China is 7 days, with at most 15 items per source.** On 2026-10-14 the 48-hour window held 28 usable
+  South China Morning Post items, 1 from The Diplomat (its feed has 96 items, mostly older), and 0 from
+  China Digital Times. The user approved 7 days (`window_hours` in `tracks.py`). That gave 25 SCMP and 5
+  Diplomat items, and the widened pass filled the rest with SCMP. The user then asked for a per-source
+  cap (`max_per_source: 15`). The capped run gives 20 items, SCMP 15 and Diplomat 5, so the crawl exits 1.
+  Only two sources deliver, so a cap of 15 cannot reach 25. A cap of 20 would reach 25 but leave SCMP at
+  20 of 25. China Digital Times stays at 0: its newest item, dated 2026-10-06, is older than 7 days.
 - **Feed images are often blocked from the proxy.** `images.ft.com` returned curl code 000, and
   `npr.brightspotcdn.com` returned 403. Those images are marked `unverified`. Do not rewrite the URL.
 - **A feed thumbnail can 401 while the article's `og:image` returns 200.** `build_candidates.py` falls
@@ -34,6 +44,14 @@ about it. Read it before changing a script or a feed list.
 - **Relative `og:image` values** are dropped, because building an absolute URL counts as constructing one.
 - **An error page can come back as 200.** `fetch_feeds.py` checks the body starts with an XML declaration
   or a feed root before it counts a feed as OK.
+
+## Template and selection
+
+- **A track with fewer than 2 stories cannot be filled.** `fill_template.mjs` throws `china needs at least
+  2 stories, has 0`, because every track has a section marker in the template. Give each track at least 2
+  stories in the selection. Removing a track means removing its marker and its nav link too.
+- **A story with an unknown Section is refused.** Every Section must match a marker, or the filler stops
+  with `no SECTION marker in the template for: <name>`.
 
 ## Screenshots
 

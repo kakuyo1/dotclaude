@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Write REQUEST.md and PLAN.md for a crawl job, so the planner does not hand-write them.
 
-Usage: python write_crawl_job.py --track international|tech --handover DIR
+Usage: python write_crawl_job.py --track KEY --handover DIR
 
-The job slug is the handover folder's name. Source names come from crawl_track.SOURCES. The
-interpreter and script paths are this run's, so the plan can be run as written.
+KEY is a track in tracks.TRACKS. The job slug is the handover folder's name. Source names come from
+tracks.TRACKS. The interpreter and script paths are this run's, so the plan can be run as written.
 """
 import argparse
 import os
@@ -12,7 +12,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from crawl_track import SOURCES, TRACK_LABEL  # noqa: E402
+from tracks import TRACKS  # noqa: E402
 
 REQUEST = """# Request: {slug}
 
@@ -70,16 +70,17 @@ one line is required, not optional.
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--track", required=True, choices=sorted(SOURCES))
+    ap.add_argument("--track", required=True, choices=sorted(TRACKS))
     ap.add_argument("--handover", required=True)
     args = ap.parse_args()
 
     handover = os.path.abspath(args.handover)
     os.makedirs(handover, exist_ok=True)
-    listed = SOURCES[args.track]
+    track = TRACKS[args.track]
+    listed = track["sources"]
     fields = {
         "slug": os.path.basename(handover),
-        "label": TRACK_LABEL[args.track],
+        "label": track["label"],
         "track": args.track,
         "handover": handover,
         "names": ", ".join(name for name, *_ in listed),

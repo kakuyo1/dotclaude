@@ -16,10 +16,14 @@ import re
 import sys
 from collections import Counter
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from tracks import TRACKS  # noqa: E402
+
 BLOCK = re.compile(r"(?m)^## (\d+)\s*$")
 FIELD = re.compile(r"(?m)^([A-Za-z ]+): (.*)$")
 FIELDS_OUT = ("Track", "Source", "Title", "Published", "Link", "Image", "Summary", "Discussion")
-SECTION = {"International": "International", "Tech": "Technology"}
+SECTION = {t["label"]: t["section"] for t in TRACKS.values()}
 STOP = {"with", "from", "that", "this", "into", "over", "after", "says", "will", "their", "about",
         "have", "been", "your", "just", "what", "when", "than", "more", "show"}
 

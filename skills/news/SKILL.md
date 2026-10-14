@@ -2,7 +2,7 @@
 name: news
 disable-model-invocation: true
 description: >-
-  Two-track news digest built on the team workflow. Two jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR) and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters and Ars Technica are off unless requested. The orchestrator removes duplicates and selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
+  Three-track news digest built on the team workflow. Three jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR), China (South China Morning Post, The Diplomat, China Digital Times), and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters, Ars Technica, and the Financial Times are off unless requested. The orchestrator removes duplicates and selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
 ---
 
 # Daily news digest
@@ -15,6 +15,7 @@ Everything stays in English. Titles and summaries are not translated.
 
 Where things are:
 
+- `scripts/tracks.py`: each track's label, page section, and feed URLs. Every other script reads it.
 - `scripts/`: feed and article fetching, the crawl filter, the plan and selection writers, and the
   page filler and screenshot check. Use these rather than writing new fetch or HTML code.
 - `template/news-template.html`: the page. Stage 3 fills it; it is not regenerated.
@@ -24,29 +25,18 @@ Where things are:
 
 ## Sources
 
-| Track | Source | Feed |
+`scripts/tracks.py` holds each track's feeds. Read it there rather than copying URLs here.
+
+| Track | Page section | Sources |
 | --- | --- | --- |
-| International | BBC News, world | `https://feeds.bbci.co.uk/news/world/rss.xml` |
-| International | The Guardian, world | `https://www.theguardian.com/world/rss` |
-| International | Al Jazeera English | `https://www.aljazeera.com/xml/rss/all.xml` |
-| International | NPR, news | `https://feeds.npr.org/1001/rss.xml` |
-| International | Reuters, via Google News | `https://news.google.com/rss/search?q=when:24h+site:reuters.com&hl=en-US&gl=US&ceid=US:en` |
-| Tech | Hacker News | `https://news.ycombinator.com/rss` |
-| Tech | arXiv cs.AI, cs.LG, cs.CL | `https://rss.arxiv.org/rss/cs.AI`, `.../cs.LG`, `.../cs.CL` |
-| Tech | Techmeme | `https://www.techmeme.com/feed.xml` |
-| Tech | Ars Technica | `https://feeds.arstechnica.com/arstechnica/index` |
-| Tech | Simon Willison's Weblog | `https://simonwillison.net/atom/everything/` |
+| International | International | BBC News, The Guardian, Al Jazeera English, NPR |
+| China | China | South China Morning Post, The Diplomat, China Digital Times |
+| Tech | Technology | Hacker News, arXiv cs.AI, cs.LG, cs.CL, Techmeme, Simon Willison's Weblog |
 
-Reuters and Ars Technica are off by default, because their articles cannot be reached through the
-proxy. They are listed in `scripts/crawl_track.py` and run only with `--include-blocked`, which the
-user must ask for. Feeds go through the proxy at `127.0.0.1:7890`.
-
-Quirks to plan for:
-
-- arXiv is often empty, on weekends and some weekdays. The track fills from its other sources.
-- Hacker News has no descriptions and no point counts. The crawl reads each item's article page,
-  and front-page order is its attention signal.
-- Techmeme permalinks answered 403 in the 2026-10-13 run. The crawl drops them before summarising.
+Reuters, Ars Technica, and the Financial Times are blocked: their article pages cannot be reached
+through the proxy. `crawl_track.py` skips them unless it gets `--include-blocked`, which the user must
+ask for. Feeds go through the proxy at `127.0.0.1:7890`. Why each source behaves as it does is in
+`references/pitfalls.md`.
 
 ## Run folder
 
@@ -58,12 +48,12 @@ Each run writes to one folder, named for the minute it starts:
 
 Take the name from `date +%Y-%m-%d-%H-%M` at the start of Preflight. `<run>` below means this
 folder. It holds the run manifest `news-run.json`, the team run's `jobs.json` and `watcher.log`, one
-folder per job (`news-international/`, `news-tech/`), and `news-html/` for the selection, the
-screenshots, and `REVIEW.md`. The page itself goes in the project root.
+folder per job (`news-international/`, `news-china/`, `news-tech/`), and `news-html/` for the
+selection, the screenshots, and `REVIEW.md`. The page itself goes in the project root.
 
 Never reuse a run folder. The watcher resumes from the `state.json` files in it, so a second run
-there would inherit the first run's phases. If the name already exists, take the next minute's name. The 2026-10-13 run
-predates this layout; its unstamped `.orca/team/news-*` folders are its record.
+there would inherit the first run's phases. If the name already exists, take the next minute's
+name. The 2026-10-13 run predates this layout; its unstamped `.orca/team/news-*` folders are its record.
 
 ## Preflight
 
@@ -74,16 +64,17 @@ predates this layout; its unstamped `.orca/team/news-*` folders are its record.
 3. Create the run manifest `<run>/news-run.json` before the first worktree. Record each worktree
    (path, id, branch) as soon as `orca worktree create` returns it. Cleanup reads only this file.
 
-## Stage 1: two crawl jobs (team run)
+## Stage 1: three crawl jobs (team run)
 
-Start one team run with two jobs, `news-international` and `news-tech`, in `<run>`. Each job has its
-own worktree and implementer. Neither commits. Start the watcher with `-JobsFile <run>/jobs.json`:
-the stop in Monitoring finds it by that folder name.
+Start one team run with three jobs, `news-international`, `news-china`, and `news-tech`, in `<run>`.
+Each job has its own worktree and implementer. Neither commits. Start the watcher with
+`-JobsFile <run>/jobs.json`: the stop in Monitoring finds it by that folder name.
 
 Before the run, write each job's plan with the script. Do not hand-write it:
 
 ```bash
 python scripts/write_crawl_job.py --track international --handover <run>/news-international
+python scripts/write_crawl_job.py --track china --handover <run>/news-china
 python scripts/write_crawl_job.py --track tech --handover <run>/news-tech
 ```
 
@@ -103,32 +94,38 @@ figures and attribution. Nothing from memory, and no adjectives such as "groundb
 No review for crawl jobs. The implementer writes `CANDIDATES.md` and a one-line `IMPLEMENTATION.md`. The
 watcher needs that line to treat the turn as finished, and without it the watcher re-sends the plan.
 The watcher then logs `ACTION: Review requested` for each job. That line is expected. The orchestrator
-does not write `REVIEW.md` for either job, and does not run the checks again. When both `CANDIDATES.md`
-files exist, start Stage 2 at once.
+does not write `REVIEW.md` for any of the three jobs, and does not run the checks again. When all
+three `CANDIDATES.md` files exist, start Stage 2 at once.
 
 A crawl that exits 1 has fewer than 25 usable items. The job still finishes, and the track goes to
-selection with what it has. Take the count per source from the `sources` list in `items.json`, and report it in the final report. The cause is the
-48-hour window. Ask the user before widening it with `--since`, and do not widen it silently.
+selection with what it has. Take the count per source from the `sources` list in `items.json`, and
+report it in the final report. Each track has its own window, `window_hours` in `scripts/tracks.py`: 48 hours for International
+and Tech, 7 days for China. Ask the user before widening any window with `--since`, and do not widen
+it silently. China also caps each source at 15 items (`max_per_source`), so its crawl exits 1 while
+only two of its sources deliver (see `references/pitfalls.md`).
 
 ## Stage 2: select (orchestrator)
 
-1. List both candidate files compactly. The list shows each candidate's summary and the pairs with
-   similar titles:
+1. List the three candidate files compactly. The list shows each candidate's summary and the pairs
+   with similar titles:
 
    ```bash
-   python scripts/select.py list <run>/news-international/CANDIDATES.md <run>/news-tech/CANDIDATES.md
+   python scripts/select.py list <run>/news-international/CANDIDATES.md <run>/news-china/CANDIDATES.md <run>/news-tech/CANDIDATES.md
    ```
 
    Open a full CANDIDATES.md only for a story the summary cannot settle.
-2. Choose 20 stories, aiming for 10 per track. If one track has fewer than 8 strong stories, give the
-   other track the extra slots and say so. Judge by reach and consequence, then by the source's own
-   order. Group the same event, and list the other sources under `--also`. If fewer than 20 unique
-   stories remain, deliver fewer and say so. Never pad.
+2. Choose 20 stories, aiming for 7 International, 7 China, and 6 Technology. A track with fewer than
+   5 strong stories gives its slots to the others, and say so. Each track needs at least 2 stories,
+   because the filler refuses a section with fewer. Judge by reach and consequence, then by the
+   source's own order. Group the same event, and list the other sources under `--also`. If fewer
+   than 20 unique stories remain, deliver fewer and say so. Never pad.
 3. Build `SELECTED.md`. Picks are in rank order, and each `--pick` names one candidates file:
 
    ```bash
    python scripts/select.py build --out <run>/news-html/SELECTED.md \
-     --pick <run>/news-international/CANDIDATES.md:9,23,22 --pick <run>/news-tech/CANDIDATES.md:12,7 \
+     --pick <run>/news-international/CANDIDATES.md:9,23,22 \
+     --pick <run>/news-china/CANDIDATES.md:4,11 \
+     --pick <run>/news-tech/CANDIDATES.md:12,7 \
      --also "<run>/news-international/CANDIDATES.md:9=Al Jazeera English <link>"
    ```
 
@@ -153,40 +150,41 @@ selection with what it has. Take the count per source from the `sources` list in
    node scripts/shoot_page.mjs --page <project>/news-<YYYY-MM-DD>-<HHMM>.html --out <run>/news-html
    ```
 
-3. Check the page rules. `grep -c '<article'` equals the number of selected stories. The dash and
-   non-ASCII counts are 0. There is no `<script`, `<link`, or `@font-face`. The filler already
-   enforces these, so these checks confirm the output.
+3. Check the page structure as `references/template.md` describes: the article count, the section
+   order, and the nav.
 4. Open both screenshots with the Read tool. Spot-check three story links through the proxy. Write
    `REVIEW.md` in the `news-html` folder.
 
 The page stays uncommitted until the user says otherwise (see Delivery). Design calls are fixed by
 the template: Plantin falls back to Georgia; cards and the lead sit on white; no yellow accent; light
-only. To change the design, edit the template and run the regression check in `references/template.md`.
+only. To change the design, edit the template and run the structure check in `references/template.md`.
 
 ## Monitoring
 
 The watcher cannot wake the orchestrator, and sleep-and-check loops miss events between checks. Start
 a background wait instead, and run it with `run_in_background`.
 
-The wait returns on the first of three events: both `CANDIDATES.md` files exist, a `Help requested`
+The wait returns on the first of three events: all three `CANDIDATES.md` files exist, a `Help requested`
 line (answer it as the team's help reference describes, then start the wait again), or `Finished:`.
 
-When both files exist, the wait stops the run's watcher before it returns, so nothing is left logging
-for these jobs. The stop does not prevent the re-send. The one-line `IMPLEMENTATION.md` does: the
-2026-10-14 run re-sent the tech plan about a minute after its `CANDIDATES.md` was written, because the
-plan had told the implementer to write no report. The stop only ends the run, and it comes after both
-files exist, so the first job to finish stays exposed until the other one is done. The wait does the
-stop itself, because the orchestrator acts only when a background task returns. A help request leaves
-the watcher running, because it still routes the answer.
+When all three files exist, the wait stops the run's watcher before it returns, so nothing is left
+logging for these jobs. The stop does not prevent the re-send. The one-line `IMPLEMENTATION.md` does:
+the 2026-10-14 run re-sent the tech plan about a minute after its `CANDIDATES.md` was written, because
+the plan had told the implementer to write no report. The stop only ends the run, and it comes after
+all three files exist, so the first job to finish stays exposed until the others are done. The wait
+does the stop itself, because the orchestrator acts only when a background task returns. A help
+request leaves the watcher running, because it still routes the answer.
 
 ```bash
 RUN_NAME=YYYY-MM-DD-HH-mm; RUN=<project>/.orca/team/$RUN_NAME; LOG="$RUN/watcher.log"; N=$(wc -l < "$LOG")
+CANDS="$RUN/news-international/CANDIDATES.md $RUN/news-china/CANDIDATES.md $RUN/news-tech/CANDIDATES.md"
+all_done() { for f in $CANDS; do [ -f "$f" ] || return 1; done; }
 for i in $(seq 1 360); do
-  [ -f "$RUN/news-international/CANDIDATES.md" ] && [ -f "$RUN/news-tech/CANDIDATES.md" ] && break
+  all_done && break
   tail -n +$((N+1)) "$LOG" | grep -qE 'Help requested|Finished:' && break
   sleep 5
 done
-if [ -f "$RUN/news-international/CANDIDATES.md" ] && [ -f "$RUN/news-tech/CANDIDATES.md" ]; then
+if all_done; then
   powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "powershell.exe" -and $_.ProcessId -ne $PID -and $_.CommandLine -like "*watcher.ps1*" -and $_.CommandLine -like "*'"$RUN_NAME"'*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }'
 fi
 tail -n +$((N+1)) "$LOG"

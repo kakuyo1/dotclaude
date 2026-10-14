@@ -6,9 +6,11 @@ What `crawl_track.py` guarantees, what the implementer does, and what the script
 
 1. Fetches the track's feeds in parallel through the proxy. Blocked sources are skipped unless
    `--include-blocked` is given.
-2. Keeps items published in the last 48 hours (UTC). `--since` sets the window explicitly.
+2. Keeps items published within the track's `window_hours` (UTC): 48 hours for International and Tech,
+   7 days for China. `--since` sets the window explicitly.
 3. Orders candidates round-robin across sources: rank 1 of each source, then rank 2, up to 8 per
-   source in the first pass.
+   source in the first pass. A track's `max_per_source`, when set, is the most items one source keeps;
+   its other rows count as `capped` and are not fetched.
 4. Fetches each candidate's article page, retrying once on a non-200 answer. An item is kept only
    when its page answers 200 and its text has at least 25 words. Text comes from the page's
    `<article>` body, else its description, else every paragraph on the page. The list stops at 30.
@@ -16,7 +18,7 @@ What `crawl_track.py` guarantees, what the implementer does, and what the script
    `widened`.
 6. Writes `items.json` with the kept items only. Each item has `article_http` and `text`.
 
-It prints one line per source: `kept`, `link_failed`, and `no_text`. Exit 1 means fewer than 25 items
+It prints one line per source: `kept`, `link_failed`, `no_text`, and `capped`. Exit 1 means fewer than 25 items
 were kept after widening.
 
 ## Steps for the implementer
@@ -41,6 +43,7 @@ The report says nothing else. The per-source counts come from the `sources` list
   count 25 to 30, fields, ASCII, no dashes, summaries at most 60 words.
 - `test_extract.py [items.json]`: offline check of the text extraction. With an `items.json`, it also
   asserts that every kept item has `article_http` 200 and at least 25 words of text.
+- `test_crawl.py`: offline check of the per-source cap. A source is never fetched past its room.
 
 ## Measured timings
 
@@ -50,6 +53,7 @@ Measured through the proxy on 2026-10-13, with the crawl alone:
 | --- | --- | --- |
 | International | 2 to 4 s | 30 |
 | Tech | 6 to 9 s | 24 (Techmeme 15 of 15 dropped, Hacker News 21 of 28 kept) |
+| China, 2026-10-14, 7-day window, cap 15 | not timed | 20 (SCMP 15, The Diplomat 5; FT blocked; China Digital Times 0 in window); exit 1 |
 
 Tech stayed at 24 because the 48-hour window has no more usable items. The run before this change
 finished its Tech job about four minutes after the International job: the implementer summarised items
@@ -57,6 +61,7 @@ whose Links were dead, then stopped to ask for help about the short list.
 
 ## What the scripts do not do
 
-- Widen the time window. Ask the user first.
+- Widen a track's window beyond its `window_hours`. Ask the user first. China's 7 days was approved on
+  2026-10-14.
 - Judge the content of a summary. Summaries are the implementer's, and `check_candidates.py` checks their shape.
 - Resolve Google News links. Reuters stays off by default (see `pitfalls.md`).

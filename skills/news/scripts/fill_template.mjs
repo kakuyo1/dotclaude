@@ -123,8 +123,20 @@ function sectionHtml(name, id, list) {
 }
 
 // ---- assemble -----------------------------------------------------------
+// The template's SECTION markers name the sections, in page order. A story's Section must match one.
+let page = readFileSync(values.template, "utf8");
+const sections = [...page.matchAll(/<!-- SECTION:([a-z-]+) -->/g)].map((m) => ({
+  id: m[1],
+  name: stories.find((s) => s.Section.toLowerCase() === m[1])?.Section ?? m[1],
+  marker: m[0],
+}));
+const unknown = [...new Set(stories.map((s) => s.Section))].filter(
+  (name) => !sections.some((s) => s.id === name.toLowerCase()),
+);
+if (unknown.length) throw new Error(`no SECTION marker in the template for: ${unknown.join(", ")}`);
+
 const bySection = (name) =>
-  stories.filter((s) => s.Section === name).sort((a, b) => Number(a.Rank) - Number(b.Rank));
+  stories.filter((s) => s.Section.toLowerCase() === name).sort((a, b) => Number(a.Rank) - Number(b.Rank));
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
   "September", "October", "November", "December"];
@@ -134,11 +146,9 @@ const dateLong = `${DAYS[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTHS[d.getUTCMon
 const replacements = [
   ["{{DATE_ISO}}", values.date],
   ["{{DATE_LONG}}", dateLong],
-  ["<!-- SECTION:international -->", sectionHtml("International", "international", bySection("International"))],
-  ["<!-- SECTION:technology -->", sectionHtml("Technology", "technology", bySection("Technology"))],
+  ...sections.map((s) => [s.marker, sectionHtml(s.name, s.id, bySection(s.id))]),
 ];
 
-let page = readFileSync(values.template, "utf8");
 for (const [marker, html] of replacements) {
   if (!page.includes(marker)) throw new Error(`template is missing ${marker}`);
   // A function replacement keeps "$" in story text from being read as a pattern.
@@ -148,5 +158,5 @@ if (/\{\{[A-Z_]+\}\}/.test(page)) throw new Error("an unfilled placeholder is le
 if (/[^\x00-\x7F]/.test(page)) throw new Error("the page is not ASCII");
 
 writeFileSync(values.out, page, { encoding: "ascii" });
-const counts = ["International", "Technology"].map((s) => `${s} ${bySection(s).length}`).join(", ");
+const counts = sections.map((s) => `${s.name} ${bySection(s.id).length}`).join(", ");
 console.log(`wrote ${values.out} (${stories.length} stories: ${counts})`);
