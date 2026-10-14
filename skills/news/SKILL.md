@@ -48,26 +48,43 @@ Quirks to plan for:
   and front-page order is its attention signal.
 - Techmeme permalinks answered 403 in the 2026-10-13 run. The crawl drops them before summarising.
 
+## Run folder
+
+Each run writes to one folder, named for the minute it starts:
+
+```
+<project>/.orca/team/YYYY-MM-DD-HH-mm/
+```
+
+Take the name from `date +%Y-%m-%d-%H-%M` at the start of Preflight. `<run>` below means this
+folder. It holds the run manifest `news-run.json`, the team run's `jobs.json` and `watcher.log`, one
+folder per job (`news-international/`, `news-tech/`), and `news-html/` for the selection, the
+screenshots, and `REVIEW.md`. The page itself goes in the project root.
+
+Never reuse a run folder. The watcher resumes from the `state.json` files in it, so a second run
+there would inherit the first run's phases. If the name already exists, take the next minute's name. The 2026-10-13 run
+predates this layout; its unstamped `.orca/team/news-*` folders are its record.
+
 ## Preflight
 
 1. The project is the current working directory. It must be a git repo with at least one commit.
    Add `.orca/` to `.git/info/exclude` (not `.gitignore`), so the handover folder stays out of
    the project's tracked files.
 2. Run the proxy and Orca checks from `run.md`.
-3. Create the run manifest `<project>/.orca/team/news-run.json` before the first worktree. Record
-   each worktree (path, id, branch) as soon as `orca worktree create` returns it. Cleanup reads
-   only this file.
+3. Create the run manifest `<run>/news-run.json` before the first worktree. Record each worktree
+   (path, id, branch) as soon as `orca worktree create` returns it. Cleanup reads only this file.
 
 ## Stage 1: two crawl jobs (team run)
 
-Start one team run with two jobs, `news-international` and `news-tech`. Each job has its own
-worktree and implementer. Neither commits.
+Start one team run with two jobs, `news-international` and `news-tech`, in `<run>`. Each job has its
+own worktree and implementer. Neither commits. Start the watcher with `-JobsFile <run>/jobs.json`:
+the stop in Monitoring finds it by that folder name.
 
 Before the run, write each job's plan with the script. Do not hand-write it:
 
 ```bash
-python scripts/write_crawl_job.py --track international --handover <project>/.orca/team/news-international
-python scripts/write_crawl_job.py --track tech --handover <project>/.orca/team/news-tech
+python scripts/write_crawl_job.py --track international --handover <run>/news-international
+python scripts/write_crawl_job.py --track tech --handover <run>/news-tech
 ```
 
 The script writes `REQUEST.md` and `PLAN.md`, with the commands, paths, and rules filled in. Use
@@ -83,10 +100,11 @@ The script writes `REQUEST.md` and `PLAN.md`, with the commands, paths, and rule
 Summary rules: 1 to 3 sentences, 60 words at most. Only facts the text gives, with the source's own
 figures and attribution. Nothing from memory, and no adjectives such as "groundbreaking".
 
-No review and no report for crawl jobs. This overrides the team skill's reviewer step and its report
-requirement for these two jobs. The implementer's only deliverable is `CANDIDATES.md`. The orchestrator
-does not run the checks again and does not write `REVIEW.md`. When both `CANDIDATES.md` files exist,
-start Stage 2 at once.
+No review for crawl jobs. The implementer writes `CANDIDATES.md` and a one-line `IMPLEMENTATION.md`. The
+watcher needs that line to treat the turn as finished, and without it the watcher re-sends the plan.
+The watcher then logs `ACTION: Review requested` for each job. That line is expected. The orchestrator
+does not write `REVIEW.md` for either job, and does not run the checks again. When both `CANDIDATES.md`
+files exist, start Stage 2 at once.
 
 A crawl that exits 1 has fewer than 25 usable items. The job still finishes, and the track goes to
 selection with what it has. Take the count per source from the `sources` list in `items.json`, and report it in the final report. The cause is the
@@ -98,7 +116,7 @@ selection with what it has. Take the count per source from the `sources` list in
    similar titles:
 
    ```bash
-   python scripts/select.py list <project>/.orca/team/news-international/CANDIDATES.md <project>/.orca/team/news-tech/CANDIDATES.md
+   python scripts/select.py list <run>/news-international/CANDIDATES.md <run>/news-tech/CANDIDATES.md
    ```
 
    Open a full CANDIDATES.md only for a story the summary cannot settle.
@@ -109,9 +127,9 @@ selection with what it has. Take the count per source from the `sources` list in
 3. Build `SELECTED.md`. Picks are in rank order, and each `--pick` names one candidates file:
 
    ```bash
-   python scripts/select.py build --out <project>/.orca/team/news-html/SELECTED.md \
-     --pick <international>/CANDIDATES.md:9,23,22 --pick <tech>/CANDIDATES.md:12,7 \
-     --also "<international>/CANDIDATES.md:9=Al Jazeera English <link>"
+   python scripts/select.py build --out <run>/news-html/SELECTED.md \
+     --pick <run>/news-international/CANDIDATES.md:9,23,22 --pick <run>/news-tech/CANDIDATES.md:12,7 \
+     --also "<run>/news-international/CANDIDATES.md:9=Al Jazeera English <link>"
    ```
 
    The first pick is rank 1. Each block is copied from its candidate, with Rank, Section, and
@@ -123,7 +141,7 @@ selection with what it has. Take the count per source from the `sources` list in
    from `date +%H%M`:
 
    ```bash
-   node scripts/fill_template.mjs --selected <project>/.orca/team/news-html/SELECTED.md \
+   node scripts/fill_template.mjs --selected <run>/news-html/SELECTED.md \
      --date <YYYY-MM-DD> --out <project>/news-<YYYY-MM-DD>-<HHMM>.html
    ```
 
@@ -132,7 +150,7 @@ selection with what it has. Take the count per source from the `sources` list in
    and `mobile.png`, and exit 0 is required:
 
    ```bash
-   node scripts/shoot_page.mjs --page <project>/news-<YYYY-MM-DD>-<HHMM>.html --out <project>/.orca/team/news-html
+   node scripts/shoot_page.mjs --page <project>/news-<YYYY-MM-DD>-<HHMM>.html --out <run>/news-html
    ```
 
 3. Check the page rules. `grep -c '<article'` equals the number of selected stories. The dash and
@@ -150,22 +168,35 @@ only. To change the design, edit the template and run the regression check in `r
 The watcher cannot wake the orchestrator, and sleep-and-check loops miss events between checks. Start
 a background wait instead, and run it with `run_in_background`.
 
-Stage 1 waits for the two `CANDIDATES.md` files, not for review. The wait returns on the first of
-three events: both files exist, a `Help requested` line (answer it as the team's help reference
-describes, then start the wait again), or `Finished:`. Review requests in the log do not end it:
+The wait returns on the first of three events: both `CANDIDATES.md` files exist, a `Help requested`
+line (answer it as the team's help reference describes, then start the wait again), or `Finished:`.
+
+When both files exist, the wait stops the run's watcher before it returns, so nothing is left logging
+for these jobs. The stop does not prevent the re-send. The one-line `IMPLEMENTATION.md` does: the
+2026-10-14 run re-sent the tech plan about a minute after its `CANDIDATES.md` was written, because the
+plan had told the implementer to write no report. The stop only ends the run, and it comes after both
+files exist, so the first job to finish stays exposed until the other one is done. The wait does the
+stop itself, because the orchestrator acts only when a background task returns. A help request leaves
+the watcher running, because it still routes the answer.
 
 ```bash
-LOG=<project>/.orca/team/watcher.log; N=$(wc -l < "$LOG")
-for i in $(seq 1 120); do
-  [ -f <project>/.orca/team/news-international/CANDIDATES.md ] && [ -f <project>/.orca/team/news-tech/CANDIDATES.md ] && break
+RUN_NAME=YYYY-MM-DD-HH-mm; RUN=<project>/.orca/team/$RUN_NAME; LOG="$RUN/watcher.log"; N=$(wc -l < "$LOG")
+for i in $(seq 1 360); do
+  [ -f "$RUN/news-international/CANDIDATES.md" ] && [ -f "$RUN/news-tech/CANDIDATES.md" ] && break
   tail -n +$((N+1)) "$LOG" | grep -qE 'Help requested|Finished:' && break
-  sleep 15
+  sleep 5
 done
+if [ -f "$RUN/news-international/CANDIDATES.md" ] && [ -f "$RUN/news-tech/CANDIDATES.md" ]; then
+  powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "powershell.exe" -and $_.ProcessId -ne $PID -and $_.CommandLine -like "*watcher.ps1*" -and $_.CommandLine -like "*'"$RUN_NAME"'*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }'
+fi
 tail -n +$((N+1)) "$LOG"
 ```
 
-When both files exist, stop the watcher task with TaskStop, so it stops logging review requests.
-Stages 2 and 3 do not use the watcher. The 120 iterations cap the wait at 30 minutes.
+The stop matches a watcher whose command line names both `watcher.ps1` and the run folder, so only
+this run's watcher is stopped. The 360 iterations cap the wait at 30 minutes. On timeout the watcher
+keeps running; read `watcher.log` and the implementer pane before deciding anything.
+
+Stages 2 and 3 do not use the watcher.
 
 ## Delivery and cleanup
 
@@ -173,10 +204,12 @@ Run this only after stage 3 passes its checks and the orchestrator has reviewed 
 stopped before delivery keeps its worktrees and branches, and the report names the stage that
 stopped. Whether to delete failed work is the user's call.
 
-0. If the watcher task is still running, stop it with TaskStop.
+0. If the watcher is still running (the wait timed out), stop it with the `powershell.exe` line from
+   Monitoring, with `RUN_NAME` set. Stopping the background task alone can leave the PowerShell
+   process running.
 1. The page is in the project root from stage 3, uncommitted. Confirm it exists and that
    `git -C <project> status --short` lists only it.
-2. Remove the worktrees. For each worktree in `news-run.json`, run
+2. Remove the worktrees. For each worktree in `<run>/news-run.json`, run
    `orca worktree rm --worktree id:<id> --force --json`. Orca removes the worktree and its local
    branch when it can prove the branch merged. `--force` is needed because the run leaves untracked
    files behind.
@@ -187,7 +220,7 @@ stopped. Whether to delete failed work is the user's call.
 4. Verify. `git -C <project> worktree list` and `git -C <project> branch --list` must show no
    manifest entry. Report the output.
 
-The handover folder under `.orca/team/` stays. It holds the candidate lists, the selection, and the
+The run folder under `.orca/team/` stays. It holds the candidate lists, the selection, and the
 screenshots, which are the record of how the page was built.
 
 ## Final report

@@ -45,7 +45,7 @@ loaded. Read the two PNGs with the Read tool before writing REVIEW.md.
 
 ## Checking the template still matches the approved page
 
-The regression check refills the template from the approved selection and compares it to the
+The regression check refills the template from the approved selection of the 2026-10-13 run, kept at `.orca/team/news-html/` (that run predates the dated run folders), and compares it to the
 approved page. The only expected difference is the `span3` CSS rule, which the template added
 for sections with a multiple of three stories.
 
