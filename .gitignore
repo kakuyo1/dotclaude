@@ -31,6 +31,7 @@ daemon.status.json
 .mcp.json
 .last-cleanup
 .last-update-result.json
+.update.lock
 .ponytail-active
 .i-have-adhd-always
 
@@ -45,6 +46,7 @@ skills/daily
 skills/scrapling/.venv/
 skills/casetomanualrecord
 skills/news/scripts/node_modules/
+skills/news/scripts/__pycache__/
 
 CLAUDE.local.md
 
