@@ -30,9 +30,10 @@ The plan from `write_crawl_job.py` gives these steps in order:
    the proxy. It writes `CANDIDATES.md`.
 4. `check_candidates.py <folder>/CANDIDATES.md`. Below 25 blocks it prints FAIL, which is the expected
    result of a short crawl.
+5. Write `IMPLEMENTATION.md`: one line with the item count and the step 4 result. The watcher needs
+   this file to see the turn as finished. Without it, the watcher re-sends the plan.
 
-The implementer writes no report. `CANDIDATES.md` is its only deliverable, and the per-source counts
-come from the `sources` list in `items.json`.
+The report says nothing else. The per-source counts come from the `sources` list in `items.json`.
 
 ## Checks
 

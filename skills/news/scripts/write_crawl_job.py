@@ -28,8 +28,9 @@ PLAN = """Read and follow the "team" skill before touching any file.
 This is a crawl job for the news digest. The scripts fetch, filter, and build. You only write
 summaries. Do not write fetching or parsing code, and do not fetch any URL yourself. crawl_track.py
 already checks each Link and drops dead or textless items. If a source failed, do not investigate it.
-Your deliverable is CANDIDATES.md, and nothing else. Nobody reviews this job. The watcher's prompt
-asks for an IMPLEMENTATION.md report; this plan overrides that request, so do not write one.
+Your deliverables are CANDIDATES.md and a one-line IMPLEMENTATION.md. Nobody reviews this job. The
+watcher reads a turn with no IMPLEMENTATION.md as a stalled round and sends this plan again, so the
+one line is required, not optional.
 
 ## Scope
 
@@ -49,6 +50,8 @@ asks for an IMPLEMENTATION.md report; this plan overrides that request, so do no
 3. "{python}" "{build}" "{handover}"
 4. "{python}" "{check}" "{handover}/CANDIDATES.md". Below 25 blocks it prints FAIL, which is the
    expected result of a short crawl: leave the file as it is.
+5. Write IMPLEMENTATION.md in the handover folder with one line: the item count from step 1, and
+   OK or FAIL from step 4. Write nothing else in it.
 
 ## Forbidden
 
@@ -59,7 +62,7 @@ asks for an IMPLEMENTATION.md report; this plan overrides that request, so do no
 
 ## Acceptance
 
-- items.json, summaries.json, and CANDIDATES.md are in the handover folder, and no other file is written.
+- items.json, summaries.json, CANDIDATES.md, and IMPLEMENTATION.md are in the handover folder, and no other file is written.
 - Every block's Track is {label}. check_candidates ran: OK, or FAIL for a short crawl.
 - git status --short in this worktree prints nothing.
 """

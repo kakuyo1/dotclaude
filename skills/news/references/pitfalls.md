@@ -56,6 +56,11 @@ about it. Read it before changing a script or a feed list.
 - **No review or report for crawl jobs.** The implementer writes only `CANDIDATES.md`. The orchestrator
   does not rerun checks and does not write `REVIEW.md`. An earlier run read both reports and reviewed
   them anyway, which cost time for nothing.
+- **The watcher re-sent a finished crawl plan.** The plan told the implementer to write no
+  `IMPLEMENTATION.md`, but the watcher treats a turn that ends without one as a stalled round. The tech
+  plan went out again about a minute after its candidates were written. `write_crawl_job.py` now asks
+  for a one-line report. The Monitoring wait also stops the run's watcher once both candidate files
+  exist. That stop ends the logging but does not prevent the re-send, which is why the report matters.
 - **A short crawl stopped the implementer.** The plan told the implementer to stop on exit 1, so a track
   with 24 usable items never produced `CANDIDATES.md`. The plan now continues, and the shortfall goes in
   the report.
