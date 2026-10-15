@@ -85,10 +85,12 @@ fi
 # The orca-hook clean filter normally folds these back to ~/.orca before the blob
 # is written. This catches the case where the filter is missing or does not match,
 # so a bad blob never reaches the remote. Any quoted absolute value (a POSIX path
-# or a drive letter) ending in claude-hook.cmd, with an optional -N suffix, counts.
-# Evaluated on the STAGED blob, which is what actually lands in the commit.
+# or a drive letter) naming an .orca/agent-hooks file or claude-hook.cmd counts —
+# match on the folder, not the file name, or Orca's next rename slips through.
+# Same generality as the CI config-guard. Evaluated on the STAGED blob, which is
+# what actually lands in the commit.
 if git cat-file -p :settings.json 2>/dev/null |
-        grep -Eq '"(/|[A-Za-z]:)[^"]*claude-hook\.cmd(-[0-9]+)?"'; then
+        grep -Eq '"(/|[A-Za-z]:)[^"]*(\.orca/agent-hooks/|claude-hook\.cmd)'; then
     die "staged settings.json contains a machine-absolute Orca hook path.
 The orca-hook filter should have normalized it to ~/.orca. Reinstall it:
   bash setup.sh
