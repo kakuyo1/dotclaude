@@ -2,7 +2,7 @@
 
 ## Harness Pitfalls
 
-- **Skills are mandatory** — Load ALL matching skills via the `Skill` tool before starting ANY task, even if the topic seems familiar. Skills define guardrails and workflows — not just reference docs. Never skip because "I already know it." Known triggers: network failure → `vpn-proxy-troubleshooting`, Chinese typography → `zhlint`, UI design → `taste-skill`.
+- **Skills are mandatory** — Load ALL matching skills via the `Skill` tool before starting ANY task, even if the topic seems familiar. Skills define guardrails and workflows — not just reference docs. Never skip because "I already know it." Known triggers: network failure → `vpn-proxy-troubleshooting`, Chinese typography → `zhlint`, landing pages and HTML prototypes → `taste-skill`.
 - **Parallel tool calls** — Batch ONLY independent calls; keep width ≤4. Never batch calls with data dependencies: every call's arguments freeze before any result returns, so a call needing a prior call's output can't see it. One failure cancels the whole batch → cascade.
 - **Bash output is internal** — Goes to the agent, never the user. Let every stream reach you. Probe for existence without redirection: `command -v x` for tools, `[ -e f ] ||` for files, `cmd || true` for fallbacks. A `/dev/null` redirect is stripped out of the command rather than refused, so nothing is lost either way; append `# BYPASS_DEVNULL_CHECK` only when silence is the point (a `2>/dev/null ||` fallback chain).
 - **`/tmp` is bash-only** — Git Bash resolves it to `%TEMP%`; native python and node resolve it to `C:\tmp`. An absolute `/tmp/...` written by one runtime is invisible to the other. Scratch files live in `$TEMP`.
