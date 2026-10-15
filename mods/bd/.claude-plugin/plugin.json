@@ -1,0 +1,5 @@
+{
+  "name": "bd",
+  "version": "0.1.0",
+  "description": "A /bd command that switches the Claude Code provider by running bundle-switch.ps1, without a model turn"
+}
