@@ -17,6 +17,12 @@ XML_START = (b"<?xml", b"<rss", b"<feed", b"<rdf:RDF")
 
 
 def fetch(name, url, out_dir):
+    """Retry once: a feed that works is sometimes refused on the first try (see pitfalls.md)."""
+    result = fetch_once(name, url, out_dir)
+    return result if result[4] else fetch_once(name, url, out_dir)
+
+
+def fetch_once(name, url, out_dir):
     path = os.path.join(out_dir, name + ".xml")
     r = subprocess.run(
         ["curl", "-sS", "-L", "-x", PROXY, "--max-time", "60", "-A", UA,

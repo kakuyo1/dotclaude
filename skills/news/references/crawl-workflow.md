@@ -8,17 +8,20 @@ What `crawl_track.py` guarantees, what the implementer does, and what the script
    `--include-blocked` is given.
 2. Keeps items published within the track's `window_hours` (UTC): 48 hours for International and Tech,
    7 days for China. `--since` sets the window explicitly.
-3. Orders candidates round-robin across sources: rank 1 of each source, then rank 2, up to 8 per
+3. Drops items that an earlier digest in `--project` already carries, by their Link or an "Also covered by"
+   link, after normalising the URL (`reported.py`). Dropped items are listed under `reported` in `items.json`
+   and never reach the first pass.
+4. Orders candidates round-robin across sources: rank 1 of each source, then rank 2, up to 8 per
    source in the first pass. A track's `max_per_source`, when set, is the most items one source keeps;
    its other rows count as `capped` and are not fetched.
-4. Fetches each candidate's article page, retrying once on a non-200 answer. An item is kept only
+5. Fetches each candidate's article page, retrying once on a non-200 answer. An item is kept only
    when its page answers 200 and its text has at least 25 words. Text comes from the page's
    `<article>` body, else its description, else every paragraph on the page. The list stops at 30.
-5. If the first pass keeps fewer than 25 items, it tries the rest of the in-window items and sets
+6. If the first pass keeps fewer than 25 items, it tries the rest of the in-window items and sets
    `widened`.
-6. Writes `items.json` with the kept items only. Each item has `article_http` and `text`.
+7. Writes `items.json` with the kept items only, and the dropped items under `reported`. Each item has `article_http` and `text`.
 
-It prints one line per source: `kept`, `link_failed`, `no_text`, and `capped`. Exit 1 means fewer than 25 items
+It prints one line per source: `kept`, `link_failed`, `no_text`, `capped`, and `reported`. Exit 1 means fewer than 25 items
 were kept after widening.
 
 ## Steps for the implementer
@@ -43,7 +46,8 @@ The report says nothing else. The per-source counts come from the `sources` list
   count 25 to 30, fields, ASCII, no dashes, summaries at most 60 words.
 - `test_extract.py [items.json]`: offline check of the text extraction. With an `items.json`, it also
   asserts that every kept item has `article_http` 200 and at least 25 words of text.
-- `test_crawl.py`: offline check of the per-source cap. A source is never fetched past its room.
+- `test_crawl.py`: offline check of the per-source cap and of the earlier-digest drop. A source is never fetched past its room.
+- `test_reported.py`: offline check of the digest parsing, the link matching, and the title flag.
 
 ## Measured timings
 

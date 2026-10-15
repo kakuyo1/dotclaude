@@ -37,6 +37,13 @@ about it. Read it before changing a script or a feed list.
   cap (`max_per_source: 15`). The capped run gives 20 items, SCMP 15 and Diplomat 5, so the crawl exits 1.
   Only two sources deliver, so a cap of 15 cannot reach 25. A cap of 20 would reach 25 but leave SCMP at
   20 of 25. China Digital Times stays at 0: its newest item, dated 2026-10-06, is older than 7 days.
+- **A feed can be refused once and then work.** The Diplomat failed with `CRYPT_E_REVOCATION_OFFLINE`
+  (Schannel could not reach the revocation server), then returned 200 on five tries. `fetch_feeds.py` retries
+  each feed once.
+- **China Digital Times does not connect through the proxy.** Its TLS handshake is cut through Clash, and
+  OpenSSL fails the same way as Schannel, so this is not a TLS-backend fault. The crawl skips it, and China's
+  quota goes to the sources that delivered (SKILL.md Stage 2). Re-test after a Clash node change:
+  `curl -x http://127.0.0.1:7890 -o "$TEMP/cdt.xml" -w "%{http_code}\n" https://chinadigitaltimes.net/feed/`
 - **Feed images are often blocked from the proxy.** `images.ft.com` returned curl code 000, and
   `npr.brightspotcdn.com` returned 403. Those images are marked `unverified`. Do not rewrite the URL.
 - **A feed thumbnail can 401 while the article's `og:image` returns 200.** `build_candidates.py` falls

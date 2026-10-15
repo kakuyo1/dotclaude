@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline check for the per-source cap in crawl_track.evaluate: no fetch beyond a source's room.
+"""Offline checks for crawl_track: the per-source cap in evaluate, and the earlier-digest drop in drop_reported.
 
 Usage: python test_crawl.py
 """
@@ -32,6 +32,17 @@ def source(name, n):
     return [{"source": name, "cand": i} for i in range(1, n + 1)]
 
 
+def check_drop():
+    class Known:
+        def repeat(self, link):
+            return "news-2026-10-13-1633.html" if link == "https://x.test/old" else None
+
+    win = [{"link": "https://x.test/old", "title": "old"}, {"link": "https://x.test/new", "title": "new"}]
+    fresh, dropped = ct.drop_reported(win, Known())
+    assert [i["title"] for i in fresh] == ["new"], fresh
+    assert [(page, i["title"]) for page, i in dropped] == [("news-2026-10-13-1633.html", "old")], dropped
+
+
 def main():
     kept, stats, calls = run(source("A", 40), 15)
     assert len(kept) == 15 and len(calls) == 15, "cap: fetched beyond the source's room"
@@ -45,7 +56,8 @@ def main():
     kept_by = {s: sum(k["source"] == s for k in kept) for s in ("A", "B")}
     assert kept_by == {"A": 15, "B": 15}, kept_by
     assert stats["A"]["link_failed"] == 5, stats["A"]
-    print("cap checks passed")
+    check_drop()
+    print("crawl checks passed")
 
 
 if __name__ == "__main__":

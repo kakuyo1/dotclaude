@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Crawl one news track and write items.json for the implementer to summarise.
 
-Usage: python crawl_track.py --track KEY --handover DIR [--since ISO]
+Usage: python crawl_track.py --track KEY --handover DIR --project DIR [--since ISO]
            [--work DIR] [--include-blocked]
 
 KEY is a track in tracks.TRACKS. Fetches the track's feeds in parallel and keeps items published on
@@ -15,6 +15,9 @@ in-window items are tried and the run is marked widened. Only kept items reach i
 implementer never summarises a dead link or an empty page. Writes HANDOVER/items.json.
 
 Sources marked blocked in tracks.py are skipped unless --include-blocked is given.
+
+Items that an earlier news-*.html digest in --project already carries are dropped before the first
+pass (see reported.py). They are listed under "reported" in items.json.
 
 Exit 1 when fewer than 25 items are kept after widening.
 """
@@ -32,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import fetch_articles  # noqa: E402
 import fetch_feeds  # noqa: E402
+import reported  # noqa: E402
 from fetch_articles import MIN_WORDS  # noqa: E402
 from parse_feeds import ATOM, atom_items, parse_date, rss_items  # noqa: E402
 from tracks import TRACKS  # noqa: E402
@@ -52,6 +56,18 @@ def in_window(raw, since):
             continue
         kept.append(dict(item, rank=rank, published_utc=d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else None))
     return kept
+
+
+def drop_reported(win, history):
+    """Split win into the items no earlier digest carries, and (page, item) for each one dropped."""
+    fresh, dropped = [], []
+    for item in win:
+        page = history.repeat(item["link"])
+        if page:
+            dropped.append((page, item))
+        else:
+            fresh.append(item)
+    return fresh, dropped
 
 
 def interleave(per_source):
@@ -105,6 +121,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--track", required=True, choices=sorted(TRACKS))
     ap.add_argument("--handover", required=True)
+    ap.add_argument("--project", required=True, help="the project folder whose news-*.html digests are the history")
     ap.add_argument("--since", help="ISO 8601 UTC, e.g. 2026-10-11T06:30:00Z (default: the track's window_hours ago)")
     ap.add_argument("--work", help="scratch folder (default: $TEMP/news-crawl-<track>)")
     ap.add_argument("--include-blocked", action="store_true")
@@ -119,6 +136,7 @@ def main():
     for folder in (args.handover, feeds_dir, articles_dir):
         os.makedirs(folder, exist_ok=True)
 
+    history = reported.load(args.project)
     listed = TRACKS[args.track]["sources"]
     sources = [s for s in listed if args.include_blocked or not s[3]]
     report = [{"source": s[0], "status": "skipped: blocked on this machine"}
@@ -127,15 +145,18 @@ def main():
     with ThreadPoolExecutor(max_workers=len(sources)) as pool:
         fetched = list(pool.map(lambda s: fetch_feeds.fetch(s[1], s[2], feeds_dir), sources))
 
-    per_source, stats = [], {}
+    per_source, stats, reported_items = [], {}, []
     for (name, key, _url, _blocked), (_k, code, _size, _xml, ok, note) in zip(sources, fetched):
         if not ok:
             report.append({"source": name, "status": f"failed: http={code} {note}".strip()})
             continue
         raw = load_feed(os.path.join(feeds_dir, key + ".xml"))
         win = in_window(raw, since)
-        per_source.append((name, win))
-        stats[name] = {"kept": 0, "link_failed": 0, "no_text": 0, "capped": 0}
+        fresh, dropped = drop_reported(win, history)
+        per_source.append((name, fresh))
+        stats[name] = {"kept": 0, "link_failed": 0, "no_text": 0, "capped": 0, "reported": len(dropped)}
+        reported_items += [{"source": name, "title": item["title"], "link": item["link"], "page": page}
+                           for page, item in dropped]
         report.append({"source": name, "status": "ok", "feed_items": len(raw), "in_window": len(win)})
 
     ordered = [dict(item, source=name, depth=depth, cand=i)
@@ -168,7 +189,7 @@ def main():
     for entry in report:
         entry.update(stats.get(entry["source"], {}))
     out = {"track": label, "since": since.strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "widened": widened, "sources": report, "items": items}
+           "widened": widened, "sources": report, "items": items, "reported": reported_items}
     path = os.path.join(args.handover, "items.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
@@ -177,7 +198,8 @@ def main():
         line = f"  {row['source']:<20} {row['status']}"
         if "feed_items" in row:
             line += (f"  feed_items={row['feed_items']} in_window={row['in_window']} kept={row['kept']}"
-                     f" link_failed={row['link_failed']} no_text={row['no_text']} capped={row['capped']}")
+                     f" link_failed={row['link_failed']} no_text={row['no_text']} capped={row['capped']}"
+                     f" reported={row['reported']}")
         print(line)
     fetched_pages = sum(s["kept"] + s["link_failed"] + s["no_text"] for s in stats.values())
     print(f"{label}: {len(items)} items, widened={widened}, "

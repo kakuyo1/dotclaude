@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Write REQUEST.md and PLAN.md for a crawl job, so the planner does not hand-write them.
 
-Usage: python write_crawl_job.py --track KEY --handover DIR
+Usage: python write_crawl_job.py --track KEY --handover DIR [--project DIR]
 
 KEY is a track in tracks.TRACKS. The job slug is the handover folder's name. Source names come from
 tracks.TRACKS. The interpreter and script paths are this run's, so the plan can be run as written.
+--project is the folder whose news-*.html digests are the history (default: the current folder). The
+plan passes it as an absolute path, because a job's worktree does not hold the project's uncommitted digests.
 """
 import argparse
 import os
@@ -39,7 +41,7 @@ one line is required, not optional.
 
 ## Steps
 
-1. "{python}" "{crawl}" --track {track} --handover "{handover}"
+1. "{python}" "{crawl}" --track {track} --handover "{handover}" --project "{project}"
    Expect a line "{label}: N items". Exit 1 means fewer than 25 usable items remain. Continue
    anyway: every usable item is already kept, and the count is in items.json.
 2. Read items.json (its items array). Write one summary for each item, from its text field only:
@@ -72,6 +74,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--track", required=True, choices=sorted(TRACKS))
     ap.add_argument("--handover", required=True)
+    ap.add_argument("--project", default=os.getcwd())
     args = ap.parse_args()
 
     handover = os.path.abspath(args.handover)
@@ -83,6 +86,7 @@ def main():
         "label": track["label"],
         "track": args.track,
         "handover": handover,
+        "project": os.path.abspath(args.project),
         "names": ", ".join(name for name, *_ in listed),
         "blocked": ", ".join(name for name, *_, blocked in listed if blocked) or "none",
         "python": sys.executable,

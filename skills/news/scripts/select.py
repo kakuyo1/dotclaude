@@ -2,13 +2,14 @@
 """List candidates compactly, and build SELECTED.md from a pick list.
 
 Usage:
-  python select.py list CANDIDATES.md [CANDIDATES.md ...]
+  python select.py list [--project DIR] CANDIDATES.md [CANDIDATES.md ...]
   python select.py build --out SELECTED.md --pick FILE:N[,N...] [--pick ...] [--also FILE:N=Source URL]
 
 list prints one line per candidate, its summary cut to 140 characters, and each pair of candidates
-whose titles share at least 30 percent of their words. build writes SELECTED.md: the --pick entries
-in rank order (the first is rank 1), each block copied from its candidate, plus Rank, Section, and
-Also covered by. FILE is a CANDIDATES.md path, and N is a block number in it.
+whose titles share at least 30 percent of their words. A title close to one in an earlier digest in
+--project (default: the current folder) gets a Previously reported line. build writes SELECTED.md: the
+--pick entries in rank order (the first is rank 1), each block copied from its candidate, plus Rank,
+Section, and Also covered by. FILE is a CANDIDATES.md path, and N is a block number in it.
 """
 import argparse
 import os
@@ -18,14 +19,13 @@ from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+from reported import load as load_history, words  # noqa: E402
 from tracks import TRACKS  # noqa: E402
 
 BLOCK = re.compile(r"(?m)^## (\d+)\s*$")
 FIELD = re.compile(r"(?m)^([A-Za-z ]+): (.*)$")
 FIELDS_OUT = ("Track", "Source", "Title", "Published", "Link", "Image", "Summary", "Discussion")
 SECTION = {t["label"]: t["section"] for t in TRACKS.values()}
-STOP = {"with", "from", "that", "this", "into", "over", "after", "says", "will", "their", "about",
-        "have", "been", "your", "just", "what", "when", "than", "more", "show"}
 
 
 def blocks(path):
@@ -41,11 +41,8 @@ def blocks(path):
     return out
 
 
-def words(title):
-    return {w for w in re.findall(r"[a-z0-9]{4,}", title.lower()) if w not in STOP}
-
-
-def cmd_list(paths):
+def cmd_list(paths, project):
+    history = load_history(project)
     rows = []
     for path in paths:
         folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
@@ -54,6 +51,10 @@ def cmd_list(paths):
     for ref, f in rows:
         print(f"[{ref}] {f.get('Source', '?')} | {f.get('Published', '?')} | {f.get('Title', '?')}")
         print(f"    {f.get('Summary', '')[:140]}")
+        hit = history.similar(f.get("Title", ""))
+        if hit:
+            page, other, score = hit
+            print(f"    Previously reported: {page} ({score}): {other.encode('ascii', 'replace').decode()}")
     print("similar titles:")
     found = False
     for i, (ra, a) in enumerate(rows):
@@ -111,13 +112,14 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     ls = sub.add_parser("list")
     ls.add_argument("files", nargs="+")
+    ls.add_argument("--project", default=os.getcwd())
     bd = sub.add_parser("build")
     bd.add_argument("--out", required=True)
     bd.add_argument("--pick", action="append", required=True)
     bd.add_argument("--also", action="append", default=[])
     args = ap.parse_args()
     if args.cmd == "list":
-        cmd_list(args.files)
+        cmd_list(args.files, args.project)
     else:
         cmd_build(args)
 

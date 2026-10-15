@@ -2,7 +2,7 @@
 name: news
 disable-model-invocation: true
 description: >-
-  Three-track news digest built on the team workflow. Three jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR), China (South China Morning Post, The Diplomat, China Digital Times), and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters, Ars Technica, and the Financial Times are off unless requested. The orchestrator removes duplicates and selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
+  Three-track news digest built on the team workflow. Three jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR), China (South China Morning Post, The Diplomat, China Digital Times), and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters, Ars Technica, and the Financial Times are off unless requested. The crawl drops stories that earlier digests already carry. The orchestrator removes duplicates within the run, selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
 ---
 
 # Daily news digest
@@ -16,8 +16,9 @@ Everything stays in English. Titles and summaries are not translated.
 Where things are:
 
 - `scripts/tracks.py`: each track's label, page section, and feed URLs. Every other script reads it.
-- `scripts/`: feed and article fetching, the crawl filter, the plan and selection writers, and the
-  page filler and screenshot check. Use these rather than writing new fetch or HTML code.
+- `scripts/`: feed and article fetching, the crawl filter, the earlier-digest check (`reported.py`),
+  the plan and selection writers, and the page filler and screenshot check. Use these rather than writing
+  new fetch or HTML code.
 - `template/news-template.html`: the page. Stage 3 fills it; it is not regenerated.
 - `references/crawl-workflow.md`: what the crawl guarantees and what the implementer does.
 - `references/template.md`: how the template is filled, checked, and changed.
@@ -81,9 +82,12 @@ python scripts/write_crawl_job.py --track tech --handover <run>/news-tech
 The script writes `REQUEST.md` and `PLAN.md`, with the commands, paths, and rules filled in. Use
 `PLAN.md` as it is. The implementer then runs three commands:
 
-1. `crawl_track.py` fetches the feeds and each candidate's article page. It keeps an item only when
-   its Link answers 200 and its text has at least 25 words, so dead or textless items never reach
-   the implementer. It writes `items.json`.
+1. `crawl_track.py` drops any item that an earlier `news-*.html` in the project already carries, by its
+   Link or an "Also covered by" link. It then fetches the feeds and each remaining candidate's article page.
+   It keeps an item only when its Link answers 200 and its text has at least 25 words, so dead or textless
+   items never reach the implementer. It writes `items.json`, with the dropped items under `reported`. The
+   plan passes the project as an absolute path, because a job's worktree does not hold the project's
+   uncommitted digests.
 2. The implementer writes `summaries.json`, one summary per item, from the item's `text` field.
 3. `build_candidates.py` writes `CANDIDATES.md`. It reuses the Link results from step 1 and checks
    the images. The implementer then runs `check_candidates.py`.
@@ -113,12 +117,17 @@ only two of its sources deliver (see `references/pitfalls.md`).
    python scripts/select.py list <run>/news-international/CANDIDATES.md <run>/news-china/CANDIDATES.md <run>/news-tech/CANDIDATES.md
    ```
 
+   A `Previously reported:` line means the title is close to one in an earlier digest. Drop the candidate
+   by default. Keep it only when its summary states a new fact that the earlier story lacks.
    Open a full CANDIDATES.md only for a story the summary cannot settle.
 2. Choose 20 stories, aiming for 7 International, 7 China, and 6 Technology. A track with fewer than
    5 strong stories gives its slots to the others, and say so. Each track needs at least 2 stories,
    because the filler refuses a section with fewer. Judge by reach and consequence, then by the
    source's own order. Group the same event, and list the other sources under `--also`. If fewer
    than 20 unique stories remain, deliver fewer and say so. Never pad.
+   A source whose feed failed in the crawl gets no slots (its `sources` entry in `items.json` has a `failed`
+   status). The track's quota is split as evenly as the count allows across the track's sources that
+   delivered. A source that cannot fill its share passes the rest to the track's other sources.
 3. Build `SELECTED.md`. Picks are in rank order, and each `--pick` names one candidates file:
 
    ```bash
@@ -227,7 +236,7 @@ Give the user:
 
 - the path to the HTML file in the project root
 - what cleanup removed, and the branches still present
-- the count per track: candidates, dropped in the crawl (link, text), selected, and merged duplicates
+- the count per track: candidates, dropped in the crawl (link, text, already reported), selected, and merged duplicates
 - any track that came up short, and by how much
 - any feed that failed, and what replaced it
 - the design calls, which the template fixes (see Stage 3)
