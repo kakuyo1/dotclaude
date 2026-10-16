@@ -16,7 +16,8 @@ What `crawl_track.py` guarantees, what the implementer does, and what the script
    its other rows count as `capped` and are not fetched.
 5. Fetches each candidate's article page, retrying once on a non-200 answer. An item is kept only
    when its page answers 200 and its text has at least 25 words. Text comes from the page's
-   `<article>` body, else its description, else every paragraph on the page. The list stops at 30.
+   `<article>` body, else its description, else every paragraph on the page. A body over 1400
+   characters keeps its opening, middle, and closing, in that order. The list stops at 30.
 6. If the first pass keeps fewer than 25 items, it tries the rest of the in-window items and sets
    `widened`.
 7. Writes `items.json` with the kept items only, and the dropped items under `reported`. Each item has `article_http` and `text`.

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Offline check for body_text: a short <article> wrapper must fall back to the page body.
+"""Offline check for body_text and sample: a short <article> wrapper must fall back to the page
+body, and a body over the limit must keep its closing.
 
 Usage: python test_extract.py [ITEMS.json]
 
@@ -26,6 +27,12 @@ def main():
     arxiv = ('<html><head><meta property="og:description" content="' + " ".join(["Abstract"] * 30)
              + '"></head><body>' + nav + "</body></html>")
     assert fa.body_text(arxiv).startswith("Abstract"), "navigation text used instead of the description"
+    long = " ".join(["word"] * 400)
+    cut = fa.sample(long, fa.TEXT_LIMIT)
+    assert fa.sample("short text", fa.TEXT_LIMIT) == "short text", "short text was cut"
+    assert len(cut) <= fa.TEXT_LIMIT, "sample ran over the limit"
+    assert cut.startswith(fa.MARKERS[0]) and fa.MARKERS[2].strip() in cut, "sample markers missing"
+    assert cut.endswith(long[-20:]), "sample dropped the closing"
     if len(sys.argv) > 1:
         with open(sys.argv[1], encoding="utf-8") as f:
             items = json.load(f)["items"]
