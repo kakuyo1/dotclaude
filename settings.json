@@ -7,7 +7,8 @@
     "BASH_DEFAULT_TIMEOUT_MS": "240000",
     "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/bd",
     "HTTP_PROXY": "http://127.0.0.1:7890",
-    "HTTPS_PROXY": "http://127.0.0.1:7890"
+    "HTTPS_PROXY": "http://127.0.0.1:7890",
+    "PYTHONIOENCODING": "utf-8"
   },
   "permissions": {
     "defaultMode": "bypassPermissions"
