@@ -16,4 +16,4 @@ case "$SID" in agent-*) exit 0 ;; esac
 result_count=$(echo "$input" | jq -r '[.tool_response.results[]?] | length')
 [ "$result_count" -gt 0 ] || exit 0
 
-emit_post_tool_context 'WebSearch returns result titles and URLs plus a short synthesized summary — not the full page content. To actually read a result that matters, use WebFetch; if WebFetch is truncated or refused, fall back to the /read-url skill. Never cite a WebSearch result as a source without reading it.'
+emit_post_tool_context 'WebSearch returns result titles and URLs plus a short synthesized summary — not the full page content. To actually read a result that matters, use WebFetch; if WebFetch is truncated or refused, fall back to the /web-fetch skill. Never cite a WebSearch result as a source without reading it.'

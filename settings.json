@@ -108,7 +108,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/hint-skill-read-url.sh",
+            "command": "bash ~/.claude/hooks/hint-skill-web-fetch.sh",
             "timeout": 5
           }
         ]

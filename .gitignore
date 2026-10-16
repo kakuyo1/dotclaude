@@ -43,7 +43,6 @@ settings.json.bak*
 settings.json.txt
 
 skills/daily
-skills/scrapling/.venv/
 skills/casetomanualrecord
 skills/news/scripts/node_modules/
 skills/news/scripts/__pycache__/

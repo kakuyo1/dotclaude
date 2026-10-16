@@ -27,4 +27,4 @@ The script's shebang uses `uv run --script` with PEP 723 inline deps, so `beauti
 
 ## Still not working?
 
-If `curl` returns HTML but selector extraction finds nothing useful, the server may be serving a different page to `curl` than a browser (anti-bot, Cloudflare challenge, user-agent sniffing). Fall back to `$scrapling`, which fetches with a real browser fingerprint.
+If `curl` returns HTML but selector extraction finds nothing useful, the server may be serving a different page to `curl` than a browser (anti-bot, Cloudflare challenge, user-agent sniffing). Read `references/scrapling.md` for fetching with a real browser fingerprint.
