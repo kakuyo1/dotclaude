@@ -41,6 +41,7 @@ history.jsonl
 settings.local.json
 settings.json.bak*
 settings.json.txt
+*.pebrel-bak
 
 skills/daily
 skills/web-search/.venv/
@@ -48,6 +49,7 @@ skills/web-search/scripts/__pycache__/
 skills/casetomanualrecord
 skills/news/scripts/node_modules/
 skills/news/scripts/__pycache__/
+skills/pebrel-runtime/
 
 CLAUDE.local.md
 
