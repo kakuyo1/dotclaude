@@ -3,6 +3,7 @@
   "env": {
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
+    "CLAUDE_CODE_ENABLE_TODO_TOOLS": "true",
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
     "BASH_DEFAULT_TIMEOUT_MS": "240000",
     "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/bd",
@@ -373,6 +374,7 @@
   },
   "autoMemoryEnabled": true,
   "skipDangerousModePermissionPrompt": true,
+  "todoFeatureEnabled": false,
   "theme": "dark-ansi",
   "autoCompactEnabled": true
 }
