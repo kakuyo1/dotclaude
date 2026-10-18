@@ -47,6 +47,7 @@ MAGENTA=$'\033[35m'
 CYAN=$'\033[36m'
 GRAY=$'\033[90m'
 BOLD=$'\033[1m'
+STRIKE=$'\033[9m'
 RESET=$'\033[0m'
 sep='\'
 
@@ -315,24 +316,35 @@ clock_segment="  ${GRAY}$(date '+%H:%M')${RESET}"
 
 # --- todo block --------------------------------------------------------------
 # TaskCreate/TaskUpdate keep one JSON file per task in ~/.claude/tasks/<sid>/.
-# Header is done/total, then unfinished tasks: in progress first, five at most.
+# Header is done/total, then in progress, pending, and completed (struck through),
+# eight rows at most. Deleted tasks are dropped. An in-progress row shows how long
+# it has run: a task file is rewritten on each status change, so its mtime is the
+# moment the task started.
 todo_block=""
 if [[ -n "$session_id" ]]; then
   shopt -s nullglob
   task_files=("$HOME"/.claude/tasks/"$session_id"/*.json)
   shopt -u nullglob
   if (( ${#task_files[@]} )); then
-    todo_block=$(jq -rs --arg c "$CYAN" --arg g "$GRAY" --arg gr "$GREEN" --arg r "$RESET" '
-      map(select(.status != "deleted")) as $all
-      | if ($all | length) == 0 then empty else
-        ($all | map(select(.status == "completed")) | length) as $done
-        | ($all | sort_by((if .status == "in_progress" then 0 else 1 end), (.id | tonumber))
-                | map(select(.status != "completed"))) as $open
-        | (if $done == ($all | length) then $gr else $g end) + "todo \($done)/\($all | length)" + $r,
-          ($open[:5][] | if .status == "in_progress"
-              then "  \($c)▸\($r) \(.activeForm)"
+    mtimes=()
+    for f in "${task_files[@]}"; do
+      m=$(file_mtime_epoch "$f")
+      mtimes+=("${m:-0}")
+    done
+    mt_json="[$(IFS=,; printf '%s' "${mtimes[*]}")]"
+    todo_block=$(jq -rs --argjson mt "$mt_json" --argjson now "$(date +%s)" --arg c "$CYAN" --arg g "$GRAY" --arg gr "$GREEN" --arg s "$STRIKE" --arg r "$RESET" '
+      def fmt: if . < 60 then "\(.)s" elif . < 3600 then "\(. / 60 | floor)m \(. % 60)s" else "\(. / 3600 | floor)h \(. % 3600 / 60 | floor)m" end;
+      to_entries | map(.value + {mtime: $mt[.key]}) | map(select(.status != "deleted")) as $live
+      | if ($live | length) == 0 then empty else
+        ($live | map(select(.status == "completed")) | length) as $done
+        | ($live | sort_by((if .status == "in_progress" then 0 elif .status == "completed" then 2 else 1 end), (.id | tonumber))) as $rows
+        | (if $done == ($live | length) then $gr else $g end) + "todo \($done)/\($live | length)" + $r,
+          ($rows[:8][] | if .status == "in_progress"
+              then "  \($c)▸\($r) \(.activeForm) \($g)\(([$now - .mtime, 0] | max) | fmt)\($r)"
+              elif .status == "completed"
+              then "  \($g)\($s)✓ \(.subject)\($r)"
               else "  \($g)○\($r) \(.subject)" end),
-          (if ($open | length) > 5 then "  \($g)+\(($open | length) - 5) more\($r)" else empty end)
+          (if ($rows | length) > 8 then "  \($g)+\(($rows | length) - 8) more\($r)" else empty end)
         end
     ' "${task_files[@]}" 2>/dev/null)
   fi
