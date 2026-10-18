@@ -3,8 +3,9 @@
 #
 # Reads stdin JSON (session_id, cwd, model.id, context_window, workspace,
 # cost.total_lines_added/removed, effort, thinking),
-# renders a single line with model + ctx% + balance + cwd + git + proxy + audit +
-# idle + drift + file + effort + clock segments scoped to the current session.
+# renders a line with model + ctx% + balance + cwd + git + proxy + audit +
+# idle + drift + file + effort + clock segments scoped to the current session,
+# then a todo block below it when the session has tasks.
 #
 # Audit segment priority:
 #   1. <sid>.json.auditing-<pid>-<ts>  → "auditing… Ns" (cyan) while alive
@@ -312,9 +313,35 @@ fi
 # Always renders; replaces the per-turn prompt-injection clock hook.
 clock_segment="  ${GRAY}$(date '+%H:%M')${RESET}"
 
+# --- todo block --------------------------------------------------------------
+# TaskCreate/TaskUpdate keep one JSON file per task in ~/.claude/tasks/<sid>/.
+# Header is done/total, then unfinished tasks: in progress first, five at most.
+todo_block=""
+if [[ -n "$session_id" ]]; then
+  shopt -s nullglob
+  task_files=("$HOME"/.claude/tasks/"$session_id"/*.json)
+  shopt -u nullglob
+  if (( ${#task_files[@]} )); then
+    todo_block=$(jq -rs --arg c "$CYAN" --arg g "$GRAY" --arg gr "$GREEN" --arg r "$RESET" '
+      map(select(.status != "deleted")) as $all
+      | if ($all | length) == 0 then empty else
+        ($all | map(select(.status == "completed")) | length) as $done
+        | ($all | sort_by((if .status == "in_progress" then 0 else 1 end), (.id | tonumber))
+                | map(select(.status != "completed"))) as $open
+        | (if $done == ($all | length) then $gr else $g end) + "todo \($done)/\($all | length)" + $r,
+          ($open[:5][] | if .status == "in_progress"
+              then "  \($c)▸\($r) \(.activeForm)"
+              else "  \($g)○\($r) \(.subject)" end),
+          (if ($open | length) > 5 then "  \($g)+\(($open | length) - 5) more\($r)" else empty end)
+        end
+    ' "${task_files[@]}" 2>/dev/null)
+  fi
+fi
+
 # --- compose -----------------------------------------------------------------
 left="${model_segment}${ctx_segment}"
 [[ -n "$left" && -n "$cost_segment" ]] && left+="  "
 left+="$cost_segment"
 [[ -n "$left" && -n "$cwd_segment" ]] && left+="  "
 printf '%s%s%s%s%s%s%s%s%s%s\n' "$left" "$cwd_segment" "$git_segment" "$proxy_segment" "$audit_segment" "$idle_segment" "$drift_segment" "$file_segment" "$effort_segment" "$clock_segment"
+if [[ -n "$todo_block" ]]; then printf '%s\n' "$todo_block"; fi
