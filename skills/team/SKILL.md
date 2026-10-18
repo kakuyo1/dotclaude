@@ -329,10 +329,10 @@ Run `orca repo add --path <path> --json` first (run.md, step 4).
 **`orca` is not recognized.** Orca puts its CLI on `PATH` for the terminals it manages, so
 this means the watcher was started outside one. Launch it from an Orca-managed terminal.
 
-**`Unknown flag --model for command: terminal create`.** The `--command` value was split
-into separate arguments, so Orca parsed `--model` as one of its own flags. `Start-Process`
-joins `ArgumentList` with spaces and quotes nothing; quote any argument containing a space,
-as `Invoke-OrcaJson` in `watcher.ps1` does.
+**A pane shows `Unrecognized flag: --model in command opencode`, or the watcher exits 2
+for that job.** OpenCode v2's TUI takes no model flag, so the implementer never started.
+Launch plain `opencode` (run.md, step 6); the model comes from `model` in
+`~/.config/opencode/opencode.jsonc`, which must name `opencode/space-bunny-free`.
 
 **The plan arrives twice, or an implementer is sent a prompt while still busy.** The
 implementer's turn was read as finished while it was still running. OpenCode reports

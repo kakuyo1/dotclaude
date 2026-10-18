@@ -40,6 +40,8 @@ Run these before creating anything. Each one fails loudly if the setup is wrong.
   identity the branches use.
 - OpenCode permissions. The TEMP allow rule is in place (see `permissions.md`, Setup).
   Check it before the first implementer launches.
+- OpenCode model. `~/.config/opencode/opencode.jsonc` names `opencode/space-bunny-free`
+  as `model`, the default the TUI starts with (step 6 explains why it cannot be a flag).
 
 ## Steps
 
@@ -75,12 +77,15 @@ Run these before creating anything. Each one fails loudly if the setup is wrong.
 
    ```powershell
    orca terminal create --worktree id:<result.worktree.id> --title <slug> `
-     --shell powershell.exe --command "opencode --model opencode/space-bunny-free" --json
+     --shell powershell.exe --command "opencode" --json
    orca terminal wait --terminal <handle> --for tui-idle --timeout-ms 90000 --json
    ```
 
    Use `terminal create`, not a hand-opened window: Orca reports the OpenCode identity
-   only for terminals it manages. Every implementer uses `opencode/space-bunny-free`.
+   only for terminals it manages. Every implementer uses `opencode/space-bunny-free`,
+   set as the default model in `~/.config/opencode/opencode.jsonc`:
+   `"model": "opencode/space-bunny-free"`. OpenCode v2's TUI takes no model flag;
+   `--model` belongs to `opencode run`, which the watcher never uses.
 
 7. **Write `jobs.json`** at `<team-root>\jobs.json`, with the paths from step 5:
 
