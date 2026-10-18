@@ -101,7 +101,8 @@ Filter the rows for `agentIdentity` equal to `opencode` or `claude`.
 
 1. Send Ctrl+C twice to the pane.
 2. Read the pane. The exit output prints a line like `opencode -s ses_...`.
-3. Relaunch: `orca terminal send --terminal <h> --text "opencode -s <id> --model opencode/space-bunny-free" --enter --json`.
+3. Relaunch: `orca terminal send --terminal <h> --text "opencode -s <id>" --enter --json`.
+   The model comes from `model` in `~/.config/opencode/opencode.jsonc`.
 
 The session comes back with its context. A change to `~/.config/opencode/opencode.jsonc`
 takes effect only at this launch.
