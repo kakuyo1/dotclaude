@@ -315,15 +315,15 @@ fi
 clock_segment="  ${GRAY}$(date '+%H:%M')${RESET}"
 
 # --- todo block --------------------------------------------------------------
-# TaskCreate/TaskUpdate keep one JSON file per task in ~/.claude/tasks/<sid>/.
 # Header is done/total, then in progress, pending, and completed (struck through),
 # eight rows at most. Deleted tasks are dropped. An in-progress row shows how long
 # it has run: a task file is rewritten on each status change, so its mtime is the
-# moment the task started.
+# moment the task started. Files are written by the model, since deny-task-tools.sh
+# blocks TaskCreate/TaskUpdate (they open the chat panel).
 todo_block=""
 if [[ -n "$session_id" ]]; then
   shopt -s nullglob
-  task_files=("$HOME"/.claude/tasks/"$session_id"/*.json)
+  task_files=("$HOME"/.claude/progress/"$session_id"/*.json)
   shopt -u nullglob
   if (( ${#task_files[@]} )); then
     mtimes=()

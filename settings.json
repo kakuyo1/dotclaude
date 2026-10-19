@@ -106,6 +106,16 @@
         ]
       },
       {
+        "matcher": "TaskCreate|TaskUpdate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/deny-task-tools.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "WebFetch",
         "hooks": [
           {
