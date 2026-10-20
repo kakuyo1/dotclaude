@@ -332,7 +332,7 @@ this means the watcher was started outside one. Launch it from an Orca-managed t
 **A pane shows `Unrecognized flag: --model in command opencode`, or the watcher exits 2
 for that job.** OpenCode v2's TUI takes no model flag, so the implementer never started.
 Launch plain `opencode` (run.md, step 6); the model comes from `model` in
-`~/.config/opencode/opencode.jsonc`, which must name `opencode/space-bunny-free`.
+`~/.config/opencode/opencode.jsonc`, which must name `deepseek/deepseek-flash`.
 
 **The plan arrives twice, or an implementer is sent a prompt while still busy.** The
 implementer's turn was read as finished while it was still running. OpenCode reports

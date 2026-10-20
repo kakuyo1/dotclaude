@@ -62,7 +62,10 @@ name. The 2026-10-13 run predates this layout; its unstamped `.orca/team/news-*`
    Add `.orca/` to `.git/info/exclude` (not `.gitignore`), so the handover folder stays out of
    the project's tracked files.
 2. Run the proxy and Orca checks from `run.md`.
-3. Create the run manifest `<run>/news-run.json` before the first worktree. Record each worktree
+3. Check that `~/.config/opencode/opencode.jsonc` names `deepseek/deepseek-flash` as `model`.
+   The free OpenCode models are refused from this network, and a running TUI keeps the model
+   it started with.
+4. Create the run manifest `<run>/news-run.json` before the first worktree. Record each worktree
    (path, id, branch) as soon as `orca worktree create` returns it. Cleanup reads only this file.
 
 ## Stage 1: three crawl jobs (team run)

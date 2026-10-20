@@ -40,8 +40,9 @@ Run these before creating anything. Each one fails loudly if the setup is wrong.
   identity the branches use.
 - OpenCode permissions. The TEMP allow rule is in place (see `permissions.md`, Setup).
   Check it before the first implementer launches.
-- OpenCode model. `~/.config/opencode/opencode.jsonc` names `opencode/space-bunny-free`
+- OpenCode model. `~/.config/opencode/opencode.jsonc` names `deepseek/deepseek-flash`
   as `model`, the default the TUI starts with (step 6 explains why it cannot be a flag).
+  The free models are refused from this network as abusive traffic.
 
 ## Steps
 
@@ -82,9 +83,9 @@ Run these before creating anything. Each one fails loudly if the setup is wrong.
    ```
 
    Use `terminal create`, not a hand-opened window: Orca reports the OpenCode identity
-   only for terminals it manages. Every implementer uses `opencode/space-bunny-free`,
+   only for terminals it manages. Every implementer uses `deepseek/deepseek-flash`,
    set as the default model in `~/.config/opencode/opencode.jsonc`:
-   `"model": "opencode/space-bunny-free"`. OpenCode v2's TUI takes no model flag;
+   `"model": "deepseek/deepseek-flash"`. OpenCode v2's TUI takes no model flag;
    `--model` belongs to `opencode run`, which the watcher never uses.
 
 7. **Write `jobs.json`** at `<team-root>\jobs.json`, with the paths from step 5:
