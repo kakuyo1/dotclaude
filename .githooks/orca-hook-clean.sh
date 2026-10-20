@@ -8,6 +8,10 @@
 # portable ~/.orca form on commit, so the tracked blob is byte-identical across
 # machines. Mirror: orca-hook-smudge.sh.
 #
+# Pebrel installs under the user's program folder and writes that absolute path
+# too; it folds to ~/AppData/Local/Programs/Pebrel, matched on the runtime/
+# folder so a new binary name under it still normalizes.
+#
 # Only a quoted value that starts with "/" or a drive letter is rewritten, so the
 # ~/.orca form and the other hook commands pass through unchanged.
 #
@@ -22,4 +26,5 @@
 
 exec sed -E \
     -e 's#"(/|[A-Za-z]:)[^"]*/(\.orca/agent-hooks/)#"~/\2#g' \
-    -e 's#"(/|[A-Za-z]:)[^"]*claude-hook\.cmd(-[0-9]+)?"#"~/.orca/agent-hooks/claude-hook.cmd"#g'
+    -e 's#"(/|[A-Za-z]:)[^"]*claude-hook\.cmd(-[0-9]+)?"#"~/.orca/agent-hooks/claude-hook.cmd"#g' \
+    -e 's#"(/|[A-Za-z]:)[^"]*/(Pebrel/runtime/)#"~/AppData/Local/Programs/\2#g'

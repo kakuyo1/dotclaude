@@ -16,9 +16,9 @@ chmod +x .githooks/pre-commit 2>/dev/null || true
 
 printf 'core.hooksPath = %s\n' "$(git config --local core.hooksPath)"
 
-# Orca rewrites the hook path in settings.json to this machine's absolute
-# path; the orca-hook filter folds it back to ~/.orca on commit so the tracked
-# blob stays portable. Same trap as core.hooksPath: a filter driver lives in
+# Orca and Pebrel rewrite their hook paths in settings.json to this machine's
+# absolute path; the orca-hook filter folds them back to ~ on commit so the
+# tracked blob stays portable. Same trap as core.hooksPath: a filter driver lives in
 # .git/config and is never cloned, so it has to be installed here. An
 # undefined driver makes git silently pass the file through — the exact bug
 # that let a C:/Users/... path reach the remote.

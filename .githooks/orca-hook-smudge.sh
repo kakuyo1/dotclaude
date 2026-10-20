@@ -18,4 +18,5 @@ home=${home%/}
 # '#' delimits and '&' means "whole match" in sed; keep them out of the path.
 repl=$(printf '%s' "$home" | sed 's/[&#]/\\&/g')
 
-exec sed "s#~/.orca/agent-hooks#${repl}/.orca/agent-hooks#g"
+exec sed -e "s#~/.orca/agent-hooks#${repl}/.orca/agent-hooks#g" \
+         -e "s#~/AppData/Local/Programs/Pebrel/#${repl}/AppData/Local/Programs/Pebrel/#g"

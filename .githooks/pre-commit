@@ -81,18 +81,19 @@ If it is a false positive: add a scoped entry to .gitleaks.toml (path AND
 value), do not reach for --no-verify."
 fi
 
-# ---- 3. settings.json must not carry a machine-absolute Orca hook path --------
-# The orca-hook clean filter normally folds these back to ~/.orca before the blob
+# ---- 3. settings.json must not carry a machine-absolute hook path ----------
+# The orca-hook clean filter normally folds these back to ~/ before the blob
 # is written. This catches the case where the filter is missing or does not match,
 # so a bad blob never reaches the remote. Any quoted absolute value (a POSIX path
-# or a drive letter) naming an .orca/agent-hooks file or claude-hook.cmd counts —
-# match on the folder, not the file name, or Orca's next rename slips through.
-# Same generality as the CI config-guard. Evaluated on the STAGED blob, which is
-# what actually lands in the commit.
+# or a drive letter) naming an .orca/agent-hooks file, claude-hook.cmd, or
+# Pebrel's runtime folder counts — match on the folder, not the file name, or the
+# tool's next rename slips through. Same generality as the CI config-guard.
+# Evaluated on the STAGED blob, which is what actually lands in the commit.
 if git cat-file -p :settings.json 2>/dev/null |
-        grep -Eq '"(/|[A-Za-z]:)[^"]*(\.orca/agent-hooks/|claude-hook\.cmd)'; then
-    die "staged settings.json contains a machine-absolute Orca hook path.
-The orca-hook filter should have normalized it to ~/.orca. Reinstall it:
+        grep -Eq '"(/|[A-Za-z]:)[^"]*(\.orca/agent-hooks/|claude-hook\.cmd|Pebrel/runtime/|pebrel-hook\.exe)'; then
+    die "staged settings.json contains a machine-absolute Orca or Pebrel hook path.
+The orca-hook filter should have normalized it to ~/.orca or
+~/AppData/Local/Programs/Pebrel. Reinstall it:
   bash setup.sh
 Then re-add: git add settings.json"
 fi

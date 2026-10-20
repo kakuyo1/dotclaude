@@ -149,7 +149,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -203,7 +203,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -235,7 +235,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -279,7 +279,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -302,7 +302,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -325,7 +325,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -382,7 +382,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -406,7 +406,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -429,7 +429,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
@@ -443,7 +443,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/admin/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
+            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
             "timeout": 10,
             "args": [
               "claude"
