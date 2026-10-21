@@ -2,14 +2,20 @@
 name: news
 disable-model-invocation: true
 description: >-
-  Three-track news digest built on the team workflow. Three jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR), China (South China Morning Post, The Diplomat, China Digital Times), and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters, Ars Technica, and the Financial Times are off unless requested. The crawl drops stories that earlier digests already carry. The orchestrator removes duplicates within the run, selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
+  Three-track news digest, a team run by default; `/news sub` runs the crawls with three Claude
+  subagents instead of OpenCode. Three jobs crawl international news (BBC, The Guardian, Al Jazeera, NPR), China (South China Morning Post, The Diplomat, China Digital Times), and tech frontier sources (Hacker News, arXiv cs.AI/cs.LG/cs.CL, Techmeme, Simon Willison's Weblog), each keeping 25-30 English items. Each job runs one crawl script and writes summaries; the scripts fetch, check, and build the candidate list. Reuters, Ars Technica, and the Financial Times are off unless requested. The crawl drops stories that earlier digests already carry. The orchestrator removes duplicates within the run, selects 20 stories, then fills the page template with them, so no page is written from scratch. The page is written into the project the skill was triggered from, and the run's worktrees are removed afterwards. Invoked by the user with /news.
 ---
 
 # Daily news digest
 
-Three steps, one page. Stage 1 is a [team](../team/SKILL.md) run: invoke the `team` skill and
-follow its planner section and `references/run.md`. Stages 2 and 3 are the orchestrator's work,
-done with scripts, with no team run.
+Three steps, one page, in one of two modes:
+
+- `/news` (default): Stage 1 is a [team](../team/SKILL.md) run. Invoke the `team` skill and follow
+  its planner section and `references/run.md`.
+- `/news sub`: Stage 1 runs in this session. Spawn three Claude subagents, one per track, and let
+  them return. No Orca, no OpenCode, no watcher, no worktrees.
+
+Stages 2 and 3 are the orchestrator's work in both modes, done with scripts.
 
 Everything stays in English. Titles and summaries are not translated.
 
@@ -48,27 +54,37 @@ Each run writes to one folder, named for the minute it starts:
 ```
 
 Take the name from `date +%Y-%m-%d-%H-%M` at the start of Preflight. `<run>` below means this
-folder. It holds the run manifest `news-run.json`, the team run's `jobs.json` and `watcher.log`, one
-folder per job (`news-international/`, `news-china/`, `news-tech/`), and `news-html/` for the
-selection, the screenshots, and `REVIEW.md`. The page itself goes in the project root.
+folder. It holds the run manifest `news-run.json`, one folder per job (`news-international/`,
+`news-china/`, `news-tech/`), and `news-html/` for the selection, the screenshots, and `REVIEW.md`.
+A team run adds `jobs.json` and `watcher.log`. The page itself goes in the project root.
 
-Never reuse a run folder. The watcher resumes from the `state.json` files in it, so a second run
-there would inherit the first run's phases. If the name already exists, take the next minute's
-name. The 2026-10-13 run predates this layout; its unstamped `.orca/team/news-*` folders are its record.
+Never reuse a run folder. A team run's watcher resumes from the `state.json` files in it, so a
+second run there would inherit the first run's phases. If the name already exists, take the next
+minute's name. The 2026-10-13 run predates this layout; its unstamped `.orca/team/news-*` folders
+are its record.
 
 ## Preflight
+
+Both modes:
 
 1. The project is the current working directory. It must be a git repo with at least one commit.
    Add `.orca/` to `.git/info/exclude` (not `.gitignore`), so the handover folder stays out of
    the project's tracked files.
-2. Run the proxy and Orca checks from `run.md`.
-3. Check that `~/.config/opencode/opencode.jsonc` names `deepseek/deepseek-flash` as `model`.
+2. Run the proxy check from `run.md`.
+
+Team mode only:
+
+3. Run the Orca check from `run.md`.
+4. Check that `~/.config/opencode/opencode.jsonc` names `deepseek/deepseek-flash` as `model`.
    The free OpenCode models are refused from this network, and a running TUI keeps the model
    it started with.
-4. Create the run manifest `<run>/news-run.json` before the first worktree. Record each worktree
+5. Create the run manifest `<run>/news-run.json` before the first worktree. Record each worktree
    (path, id, branch) as soon as `orca worktree create` returns it. Cleanup reads only this file.
 
-## Stage 1: three crawl jobs (team run)
+Sub mode: create `<run>/news-run.json` with `"mode": "sub"` and an empty `worktrees` list, then go
+to Stage 1 (sub mode).
+
+## Stage 1: three crawl jobs (team mode)
 
 Start one team run with three jobs, `news-international`, `news-china`, and `news-tech`, in `<run>`.
 Each job has its own worktree and implementer. Neither commits. Start the watcher with
@@ -112,6 +128,30 @@ and Tech, 7 days for China. Ask the user before widening any window with `--sinc
 it silently. China also caps each source at 15 items (`max_per_source`), so its crawl exits 1 while
 only two of its sources deliver (see `references/pitfalls.md`).
 
+## Stage 1 (sub mode): three subagents
+
+Write the plans with the same script, with `--sub`:
+
+```bash
+python scripts/write_crawl_job.py --track international --handover <run>/news-international --sub
+python scripts/write_crawl_job.py --track china --handover <run>/news-china --sub
+python scripts/write_crawl_job.py --track tech --handover <run>/news-tech --sub
+```
+
+Then spawn three `general-purpose` subagents in one message, one per track, so they crawl in
+parallel. Each prompt names only its own `PLAN.md` and handover folder:
+
+```
+Follow the plan at <run>/news-international/PLAN.md exactly. Work only inside
+<run>/news-international, write no project file, and do not commit. Reply with one line: the item
+count from step 1, and OK or FAIL from the last check.
+```
+
+The plan holds the commands and the summary rules; the subagent runs them and returns its one line.
+When all three lines are in, check that each `CANDIDATES.md` exists and start Stage 2. If a subagent
+fails, run that track's commands yourself from its `PLAN.md` and carry on with the count it gives. No
+`IMPLEMENTATION.md`, no `REVIEW.md`, and no Monitoring in this mode.
+
 ## Stage 2: select (orchestrator)
 
 1. List the three candidate files compactly. The list shows each candidate's summary and the pairs
@@ -150,7 +190,7 @@ only two of its sources deliver (see `references/pitfalls.md`).
    The first pick is rank 1. Each block is copied from its candidate, with Rank, Section, and
    `Also covered by` added.
 
-## Stage 3: the page (no team run)
+## Stage 3: the page
 
 1. Fill the template. It writes into the project root and refuses to overwrite a file. Take HHMM
    from `date +%H%M`:
@@ -177,7 +217,7 @@ The page stays uncommitted until the user says otherwise (see Delivery). Design 
 the template: Plantin falls back to Georgia; cards and the lead sit on white; no yellow accent; light
 only. To change the design, edit the template and run the structure check in `references/template.md`.
 
-## Monitoring
+## Monitoring (team mode)
 
 The watcher cannot wake the orchestrator, and sleep-and-check loops miss events between checks. Start
 a background wait instead, and run it with `run_in_background`.
@@ -220,15 +260,15 @@ Run this only after stage 3 passes its checks and the orchestrator has reviewed 
 stopped before delivery keeps its worktrees and branches, and the report names the stage that
 stopped. Whether to delete failed work is the user's call.
 
-0. If the watcher is still running (the wait timed out), stop it with the `powershell.exe` line from
-   Monitoring, with `RUN_NAME` set. Stopping the background task alone can leave the PowerShell
-   process running.
+0. In team mode, if the watcher is still running (the wait timed out), stop it with the
+   `powershell.exe` line from Monitoring, with `RUN_NAME` set. Stopping the background task alone
+   can leave the PowerShell process running.
 1. The page is in the project root from stage 3, uncommitted. Confirm it exists and that
    `git -C <project> status --short` lists only it.
-2. Remove the worktrees. For each worktree in `<run>/news-run.json`, run
+2. Remove the worktrees listed in `<run>/news-run.json`. For each one, run
    `orca worktree rm --worktree id:<id> --force --json`. Orca removes the worktree and its local
    branch when it can prove the branch merged. `--force` is needed because the run leaves untracked
-   files behind.
+   files behind. The list is empty in sub mode, so this step does nothing there.
 3. Branches that Orca keeps are unmerged. Do not delete them with `git branch -D` from this skill.
    List the manifest branches that still exist
    (`git -C <project> rev-parse --verify --quiet refs/heads/<branch>`), and ask the user before

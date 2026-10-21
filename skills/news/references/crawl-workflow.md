@@ -39,6 +39,9 @@ The plan from `write_crawl_job.py` gives these steps in order:
 5. Write `IMPLEMENTATION.md`: one line with the item count and the step 4 result. The watcher needs
    this file to see the turn as finished. Without it, the watcher re-sends the plan.
 
+With `--sub`, the plan is the same without step 5: the subagent has no watcher, so its one-line
+report is its final reply instead of a file.
+
 The report says nothing else. The per-source counts come from the `sources` list in `items.json`.
 
 ## Checks
