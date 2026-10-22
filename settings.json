@@ -144,18 +144,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -198,18 +186,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
       }
     ],
     "UserPromptSubmit": [
@@ -228,18 +204,6 @@
             "type": "command",
             "command": "~/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
           }
         ]
       }
@@ -274,18 +238,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
       }
     ],
     "Stop": [
@@ -297,18 +249,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
       }
     ],
     "StopFailure": [
@@ -318,18 +258,6 @@
             "type": "command",
             "command": "~/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
           }
         ]
       }
@@ -377,18 +305,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
       }
     ],
     "PermissionRequest": [
@@ -401,18 +317,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
       }
     ],
     "SessionEnd": [
@@ -422,32 +326,6 @@
             "type": "command",
             "command": "~/.orca/agent-hooks/claude-hook.cmd",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/AppData/Local/Programs/Pebrel/runtime/pebrel-hook.exe",
-            "timeout": 10,
-            "args": [
-              "claude"
-            ]
           }
         ]
       }
