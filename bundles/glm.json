@@ -1,0 +1,16 @@
+{
+  "name": "glm",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+    "NO_PROXY": "localhost,127.0.0.1,::1,open.bigmodel.cn,.bigmodel.cn"
+  },
+  "resolveModels": {
+    "from": "https://open.bigmodel.cn/api/anthropic/v1/models",
+    "idField": "id",
+    "assignment": "single",
+    "prefer": "^glm-5\\.3$"
+  },
+  "contextSuffixes": {
+    "glm-5.3": "[1m]"
+  }
+}
