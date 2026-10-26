@@ -30,6 +30,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -41,11 +42,31 @@ from parse_feeds import ATOM, atom_items, parse_date, rss_items  # noqa: E402
 from tracks import TRACKS  # noqa: E402
 
 MIN_ITEMS, MAX_ITEMS, PER_SOURCE = 25, 30, 8
+GIFT_PARAMS = {"accessToken", "sharetype", "token"}
 
 
 def load_feed(path):
     root = ET.parse(path).getroot()
     return list(atom_items(root) if root.tag == ATOM + "feed" else rss_items(root))
+
+
+def is_techmeme(url):
+    return (urlsplit(url).hostname or "").endswith("techmeme.com")
+
+
+def without_gift_token(url):
+    """Drop a publisher's gift-article token: published on a page, it gives every reader the subscriber's access."""
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in GIFT_PARAMS]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
+def article_link(item):
+    """The article behind a feed item. A Techmeme item links to its own archive page, so its article is the
+    first publisher link in its description, without any gift token. Empty when the description has none."""
+    if not is_techmeme(item["link"]):
+        return item["link"]
+    return next((without_gift_token(h) for h in item["outlinks"] if not is_techmeme(h)), "")
 
 
 def in_window(raw, since):
@@ -54,7 +75,8 @@ def in_window(raw, since):
         d = parse_date(item["published"])
         if since and d and d < since:
             continue
-        kept.append(dict(item, rank=rank, published_utc=d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else None))
+        kept.append(dict(item, rank=rank, published_utc=d.strftime("%Y-%m-%dT%H:%M:%SZ") if d else None,
+                         article=article_link(item)))
     return kept
 
 
@@ -62,7 +84,8 @@ def drop_reported(win, history):
     """Split win into the items no earlier digest carries, and (page, item) for each one dropped."""
     fresh, dropped = [], []
     for item in win:
-        page = history.repeat(item["link"])
+        # Older digests hold Techmeme permalinks, so the feed link is checked as well as the article.
+        page = history.repeat(item["link"]) or history.repeat(item["article"])
         if page:
             dropped.append((page, item))
         else:
@@ -77,9 +100,12 @@ def interleave(per_source):
 
 
 def fetch_checked(row, articles_dir):
-    page = fetch_articles.work(row["cand"], row, articles_dir)
+    if not row["article"]:
+        return {"http": "no-article", "text": ""}, ""
+    item = {"link": row["article"]}
+    page = fetch_articles.work(row["cand"], item, articles_dir)
     if page["http"] != "200":
-        page = fetch_articles.work(row["cand"], row, articles_dir)
+        page = fetch_articles.work(row["cand"], item, articles_dir)
     return page, page["text"] or row["description"]
 
 
@@ -178,7 +204,7 @@ def main():
         "title": row["title"],
         "published": row["published"],
         "published_utc": row["published_utc"],
-        "link": row["link"],
+        "link": row["article"],
         "discussion": row["discussion"],
         "feed_image": row["image"],
         "og_image": row["page"]["og_image"],

@@ -8,13 +8,13 @@ What `crawl_track.py` guarantees, what the implementer does, and what the script
    `--include-blocked` is given.
 2. Keeps items published within the track's `window_hours` (UTC): 48 hours for International and Tech,
    7 days for China. `--since` sets the window explicitly.
-3. Drops items that an earlier digest in `--project` already carries, by their Link or an "Also covered by"
+3. Drops items that an earlier digest in `--project` already carries, by their feed Link, their article link, or an "Also covered by"
    link, after normalising the URL (`reported.py`). Dropped items are listed under `reported` in `items.json`
    and never reach the first pass.
 4. Orders candidates round-robin across sources: rank 1 of each source, then rank 2, up to 8 per
    source in the first pass. A track's `max_per_source`, when set, is the most items one source keeps;
    its other rows count as `capped` and are not fetched.
-5. Fetches each candidate's article page, retrying once on a non-200 answer. An item is kept only
+5. Fetches each candidate's article page (for a Techmeme item, the publisher page its description links to), retrying once on a non-200 answer. An item is kept only
    when its page answers 200 and its text has at least 25 words. Text comes from the page's
    `<article>` body, else its description, else every paragraph on the page. A body over 1400
    characters keeps its opening, middle, and closing, in that order. The list stops at 30.

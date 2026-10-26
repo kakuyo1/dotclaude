@@ -10,9 +10,13 @@ about it. Read it before changing a script or a feed list.
   returned 403, so the list fell to 12 blocks. The implementer then asked for help, which cost about
   four minutes. `crawl_track.py` now keeps an item only when its Link answers 200 and it has 25 words of
   text, and it tries further candidates to fill the list.
-- **Techmeme permalinks.** The Link is `techmeme.com/...`, which answered 403 through the proxy during
-  that run. The Techmeme feed itself fetches fine. Techmeme items drop out at the crawl, and their
-  summaries come from the digest text when they do pass.
+- **Techmeme links to its own archive page.** An item's Link is `techmeme.com/YYMMDD/pN#...`, which answers 200
+  with an archive snapshot. The crawl kept that snapshot as the article, so the summaries were about the
+  archive page. `crawl_track.article_link` now takes the first publisher link in the item's description
+  (`outlinks` from `parse_feeds.py`), with gift tokens removed, and that becomes the item's Link. An item
+  with no publisher link counts as `link_failed`. Earlier digests hold the permalink, so the drop checks both.
+  A permalink can change from one day to the next, so the permalink alone is not a reliable repeat check.
+  Publishers that block the proxy (Bloomberg, Axios, FT, WSJ) fail at `link_failed`.
 - **Hacker News items need their article pages.** The feed has no description, so the crawl reads the
   page. Some pages return 403, a TLS error, or a JavaScript shell with no paragraphs. Those items drop.
 - **A short `<article>` can wrap no body.** On bbc.com, the `<article>` block was 2241 characters with
