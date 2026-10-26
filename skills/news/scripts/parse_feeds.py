@@ -25,6 +25,7 @@ from email.utils import parsedate_to_datetime
 MEDIA = "{http://search.yahoo.com/mrss/}"
 DC = "{http://purl.org/dc/elements/1.1/}"
 ATOM = "{http://www.w3.org/2005/Atom}"
+HREF = re.compile(r"""href=["']([^"']+)["']""", re.I)
 
 
 def parse_date(text):
@@ -49,6 +50,11 @@ def clean(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def outlinks(raw):
+    """The http(s) links in an item's raw HTML description, in order. clean() drops them."""
+    return [html.unescape(h) for h in HREF.findall(raw or "") if h.startswith(("http://", "https://"))]
+
+
 def feed_image(node):
     for el in node.iter():
         tag = el.tag
@@ -64,6 +70,7 @@ def rss_items(root):
             "link": (it.findtext("link") or "").strip(),
             "published": (it.findtext("pubDate") or it.findtext(DC + "date") or "").strip(),
             "description": clean(it.findtext("description")),
+            "outlinks": outlinks(it.findtext("description")),
             "discussion": (it.findtext("comments") or "").strip(),
             "image": feed_image(it),
         }
@@ -81,6 +88,7 @@ def atom_items(root):
             "link": link,
             "published": (it.findtext(ATOM + "published") or it.findtext(ATOM + "updated") or "").strip(),
             "description": clean(it.findtext(ATOM + "summary") or it.findtext(ATOM + "content")),
+            "outlinks": outlinks(it.findtext(ATOM + "summary") or it.findtext(ATOM + "content")),
             "discussion": "",
             "image": feed_image(it),
         }
