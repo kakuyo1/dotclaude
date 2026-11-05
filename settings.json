@@ -136,6 +136,17 @@
         ]
       },
       {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/restrict-agent-model.sh",
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
         "matcher": "*",
         "hooks": [
           {
