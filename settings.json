@@ -15,6 +15,7 @@
     "defaultMode": "bypassPermissions"
   },
   "model": "haiku",
+  "availableModels": ["haiku"],
   "skillOverrides": {
     "archify": "user-invocable-only",
     "claude-api": "user-invocable-only",
