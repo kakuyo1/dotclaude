@@ -146,16 +146,6 @@
             "onFailure": "block"
           }
         ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -188,16 +178,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "UserPromptSubmit": [
@@ -207,15 +187,6 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/inject-git-status.sh",
             "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
           }
         ]
       }
@@ -230,15 +201,6 @@
             "timeout": 5
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "SessionStart": [
@@ -246,107 +208,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "bash ~/.claude/hooks/session-real-os.sh",
             "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "TeammateIdle": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.orca/agent-hooks/claude-hook.cmd",
-            "timeout": 10
           }
         ]
       }
